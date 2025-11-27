@@ -78,4 +78,11 @@ VideoRAG/
 └── VideoRAG.png
 ```
 
-> 在infini环境中，需要再安装MiniCPM-V2_6版本才能跑通。
+> 在infini环境中，需要再安装MiniCPM-V2_6版本才能跑通。然后执行调试脚本，会根据指定视频，生成格式化的chunk_response
+```bash
+ python test_video_converter.py \
+ --video /root/repo/uni-mem/files/hubble_oumuamua_final.webm \
+ --working-dir workdir \
+ --deepseek-key sk-*** \
+ --siliconflow-key sk-***
+```

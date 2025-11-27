@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -11,6 +12,14 @@ from ..converter import ConversionChunk, ConversionOutput, MultimodalConverter
 from ..factory import ConverterFactory
 from ..videorag import QueryParam, VideoRAG
 from ..videorag._llm import deepseek_bge_config
+from ..videorag._utils import always_get_an_event_loop, logger
+from ..videorag._videoutil import (
+    merge_segment_information,
+    saving_video_segments,
+    segment_caption,
+    speech_to_text,
+    split_video,
+)
 
 
 class VideoConverter(MultimodalConverter):
@@ -51,10 +60,10 @@ class VideoConverter(MultimodalConverter):
         }
         videorag = VideoRAG(llm=llm_config, **videorag_params)
 
-        self._report_progress(0.1, "切分视频与抽取音频")
-        videorag.insert_video(video_path_list=[str(video_path)])
+        self._report_progress(0.05, "准备视频处理流程")
+        self._ingest_video_with_progress(videorag, str(video_path))
 
-        self._report_progress(0.7, "汇总 VideoRAG 片段结果")
+        self._report_progress(0.78, "汇总 VideoRAG 片段结果")
         video_name = video_path.stem
         segments = videorag.video_segments._data.get(video_name)
         if not segments:
@@ -117,7 +126,12 @@ class VideoConverter(MultimodalConverter):
         segment_total = len(ordered_segments)
         chunks: List[ConversionChunk] = []
         for chunk_idx, (segment_id, payload) in enumerate(ordered_segments):
-            text = payload.get("content", "").strip()
+            summary_text = (
+                payload.get("metadata", {}).get("chunk_summary")
+                if isinstance(payload.get("metadata"), dict)
+                else None
+            )
+            text = (summary_text or payload.get("content", "")).strip()
             if not text:
                 continue
             segment_meta = payload.get("metadata", {}).copy()
@@ -175,6 +189,106 @@ class VideoConverter(MultimodalConverter):
                 "video_name": video_name,
             },
         )
+
+    def _ingest_video_with_progress(self, videorag: VideoRAG, video_path: str) -> None:
+        loop = always_get_an_event_loop()
+        video_name = Path(video_path).stem
+        if video_name in videorag.video_segments._data:
+            self._report_progress(0.7, f"视频 {video_name} 已存在，跳过重建")
+            return
+
+        self._report_progress(0.08, "注册视频路径")
+        loop.run_until_complete(videorag.video_path_db.upsert({video_name: video_path}))
+
+        self._report_progress(0.12, "切分视频 & 采样帧")
+        segment_index2name, segment_times_info = split_video(
+            video_path,
+            videorag.working_dir,
+            videorag.video_segment_length,
+            videorag.rough_num_frames_per_segment,
+            videorag.audio_output_format,
+        )
+
+        self._report_progress(0.2, "执行语音识别")
+        transcripts = speech_to_text(
+            video_name,
+            videorag.working_dir,
+            segment_index2name,
+            videorag.audio_output_format,
+        )
+
+        manager = multiprocessing.Manager()
+        captions = manager.dict()
+        error_queue = manager.Queue()
+
+        self._report_progress(0.28, "保存视频切片 & 生成多模态描述")
+        process_saving_video_segments = multiprocessing.Process(
+            target=saving_video_segments,
+            args=(
+                video_name,
+                video_path,
+                videorag.working_dir,
+                segment_index2name,
+                segment_times_info,
+                error_queue,
+                videorag.video_output_format,
+            ),
+        )
+
+        process_segment_caption = multiprocessing.Process(
+            target=segment_caption,
+            args=(
+                video_name,
+                video_path,
+                segment_index2name,
+                transcripts,
+                segment_times_info,
+                captions,
+                error_queue,
+            ),
+        )
+
+        process_saving_video_segments.start()
+        process_segment_caption.start()
+        process_saving_video_segments.join()
+        process_segment_caption.join()
+
+        while not error_queue.empty():
+            error_message = error_queue.get()
+            logger.error(f"[VideoConverter] 视频处理失败：{error_message}")
+            raise RuntimeError(error_message)
+
+        self._report_progress(0.45, "汇总片段信息")
+        captions = dict(captions)
+        segments_information = merge_segment_information(
+            segment_index2name,
+            segment_times_info,
+            transcripts,
+            captions,
+        )
+        manager.shutdown()
+
+        loop.run_until_complete(videorag.video_segments.upsert({video_name: segments_information}))
+        self._report_progress(0.55, "写入视频分段缓存")
+
+        self._report_progress(0.62, "编码视频特征向量")
+        loop.run_until_complete(
+            videorag.video_segment_feature_vdb.upsert(
+                video_name,
+                segment_index2name,
+                videorag.video_output_format,
+            )
+        )
+
+        cache_path = Path(videorag.working_dir) / "_cache" / video_name
+        if cache_path.exists():
+            shutil.rmtree(cache_path)
+
+        loop.run_until_complete(videorag._save_video_segments())
+        self._report_progress(0.68, "持久化视频分段")
+
+        self._report_progress(0.7, "更新多模态索引")
+        loop.run_until_complete(videorag.ainsert(videorag.video_segments._data))
 
 
 # 注册 VideoConverter
