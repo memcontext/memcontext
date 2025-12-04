@@ -232,46 +232,79 @@ META_INFO_USER_PROMPT = ("""Update the conversation meta-summary by incorporatin
 
     Updated Meta-summary:""") 
 
-# Prompt for video structured caption generation (from videorag/_videoutil/caption.py)
-VIDEO_STRUCTURED_CAPTION_PROMPT = """You are an expert video analyst. Analyze the video frames and transcript, then output ONLY a valid JSON object.
+# Prompt for video structured caption generation (used by videorag/_videoutil/caption.py)
+VIDEO_STRUCTURED_CAPTION_PROMPT = """
+你是视频逐帧视觉描述助手（不要生成额外标记如[开始]/[结束]）。
+目标：为每个给定的帧时间段输出一行可被人理解的中文描述，结合画面视觉信息与该时间段的字幕（如果有）。
 
-IMPORTANT: The chunk_summary field MUST be a plain Chinese text string. It is NOT a JSON object, NOT a nested structure, NOT an array. It is just plain text.
+格式要求（严格遵守）：
+- 每行仅包含：`[start -> end] 描述`，例如：`[420.00s -> 422.00s] 两名人物在昏暗房间内对话，左侧人物穿红色衣服`。
+- 时间必须保留秒为单位，保留两位小数（例如 420.00s、422.50s）。
+- 时间必须为相对于整部视频的绝对时间（以秒为单位，保留两位小数）。禁止使用相对于片段起点的相对时间（例如 `[0.00s -> 2.00s]`）、MM:SS 格式或混合格式。
+- 描述必须基于画面可见内容（人物、物体、动作、颜色、场景变化、显著情绪等）并结合该段字幕；不要加入未在帧中直接可见或无法确认的信息（禁止臆测）。
+- 如果画面信息不明确，只描述你能确定的视觉事实，比如“若干人影”或“模糊的血迹”；不要输出“不确定”或“可能”的长句。
+- 不要输出任何 JSON、注释、多余空行或额外解释；每个时间段一行。
+- 如果提供的字幕块为空或缺失，**禁止**在输出中生成任何形式的字幕内容或占位符（例如不要输出 `字幕: "..."`、`字幕继续`、`(无)` 等）。
+- 不要插入或保留任何方括号标签（例如不要输出 [开始] 或 [结束]）。
 
-Output format:
-{{
-  "chunk_summary": "这里写纯文本中文描述，200-300字，直接描述视频内容，不要用任何JSON格式。例如：视频中，一位身着黄色连衣裙的女子背对着镜头，站在海边的沙滩上。她的右手高举，手中似乎握着食物，吸引着空中的海鸥。背景中，蓝色的海洋泛起层层白色浪花，远处矗立着一座轮廓清晰的山脉。",
-  "scene_label": "beach_feeding_gulls",
-  "objects_detected": ["woman", "seagull", "ocean"],
-  "actions": "holding food, raising hand, attracting seagulls",
-  "emotions": "peaceful, serene",
-  "confidence": 0.92,
-  "notes": "镜头从女子背后拍摄"
-}}
 
-CRITICAL RULE FOR chunk_summary:
-- chunk_summary is a STRING value, not a JSON object
-- Write ONE continuous paragraph in Chinese describing the entire video
-- Do NOT use JSON format inside chunk_summary
-- Do NOT use frame-by-frame descriptions
-- Do NOT use nested structures like {{"frame1": ...}}
-- Do NOT use Chinese keys like "视频标题" or "画面细节"
+引导说明：
+1) 优先描述视觉事实（谁、在哪、做了什么、有什么明显物体/颜色/动作）。
+2) 在同一行中简洁地把该段字幕融入描述（如果字幕提供了语义信息），并且**确保时间为整部视频的绝对时间（秒，保留两位小数）**，例如：`[420.00s -> 422.00s] 画面为昏暗房间，一人躺着，字幕:"If we're living in together"`。
+3) 每行长度控制在 10-30 个汉字（简短、信息密集）。
 
-CORRECT chunk_summary (this is what you should output):
-"chunk_summary": "视频中，一位身着黄色连衣裙的女子背对着镜头，站在海边的沙滩上。她的头发自然垂落，发梢微卷，左手腕佩戴着一块白色表盘的手表。女子的右手高举，手中似乎握着食物，吸引着空中的海鸥。背景中，蓝色的海洋泛起层层白色浪花，远处矗立着一座轮廓清晰的山脉，天空晴朗湛蓝，营造出一种宁静而开阔的氛围。起初，一只海鸥从左侧飞向女子的手，随后更多的海鸥从不同方向飞至，它们在空中盘旋、俯冲，似乎在争抢食物。整个场景充满了自然的活力，海鸥的动态与女子的静态形成鲜明对比。"
+示例输出（仅作格式示范，实际内容请基于提供的帧与字幕）：
+[420.00s -> 422.00s] 昏暗房间内一人躺着，穿红色传统服饰；屏幕下方出现英语字幕。
+[422.00s -> 424.50s] 两人近身交谈，右侧人物表情紧张，背景可见一扇木门。
 
-WRONG chunk_summary (DO NOT output like this):
-"chunk_summary": "{{"frame1": {{"description": "..."}}}}"
-"chunk_summary": "{{"description": "...", "frames": [...]}}"
+{focus_clause}
+帧时间段：
+{intervals}
+字幕：
+{transcript}
 
-Remember: chunk_summary is just a text string, like a paragraph you would write in a book. It is NOT a JSON object.
+请严格按照上述规范返回中文时间轴列表。
 
-Other rules:
-- ALL field keys must be in English
-- Do NOT include "language" field
-- actions must be a string (comma-separated English phrases)
-- objects_detected must be an array of English words/phrases
+附加规则（必须遵守）：
+1) 如果若干相邻时间段的描述完全相同，请合并为一行，时间区间为这些相邻段的起始时间到结束时间，例如：`[13.18s -> 50.18s] 插图展示了彗星的轨迹。`。
+2) 禁止在不同时间段重复输出字面相同的描述（若视觉未发生变化，请合并而非复述）。
+3) 描述要尽量精炼且具区分性，避免泛化冗词和模糊表述。
+4) 如果画面无明显变化或为静态插图，优先输出简洁总结并合并连续区间，而不是多次重复。
+5) 严格禁止输出任何占位字幕词（例如“字幕继续”、“字幕：继续”、“字幕……”等）。只有在确实存在真实 ASR/字幕文本时，才在描述中以 `字幕:"..."` 形式包含字幕；如果该时间段没有真实 ASR，请不要写占位符或臆造字幕，直接省略字幕部分或只输出视觉描述。
 
-Output ONLY the JSON object, no explanations, no markdown, no code blocks.
-Time range: {start:.2f}s - {end:.2f}s
-Transcript: {transcript}
+示例（Few-shot）：
+# Example 1: 静态插图应被合并
+Example Input Intervals:
+[10.00s -> 12.50s]
+[12.50s -> 15.00s]
+Transcript: (无)
+Expected Output:
+[10.00s -> 15.00s] 白色插图显示彗星轨迹与轨道标注。
+
+# Example 2: 将视觉与 ASR 合并为一句简洁描述（示例使用绝对视频时间）
+Example Input Intervals:
+[270.00s -> 272.50s]
+[272.50s -> 275.00s]
+Transcript:
+[270.00s -> 275.00s] "the outgassing can be seen because it ejects large amounts of dust"
+Expected Output:
+[270.00s -> 275.00s] 近景显示彗星外逸物质吹出细小尘埃，字幕:"the outgassing can be seen..."
+
+# Example 3: 简洁的动作描述并合并时间段（避免臆造不存在的角色）
+Example Input Intervals:
+[90.00s -> 92.50s]
+[92.50s -> 95.00s]
+Transcript:
+[90.00s -> 95.00s] "around the object called a coma and a tail."
+Expected Output:
+[90.00s -> 95.00s] 画面为宇宙圖像，背景出现彗星轨迹，字幕:"around the object called a coma and a tail."
+
+# Example 4: 未提供 ASR 时不要写占位字幕，合并相邻视觉相同段（示例使用绝对视频时间）
+Example Input Intervals:
+[105.00s -> 117.50s]
+[117.50s -> 124.00s]
+Transcript: (无)
+Expected Output:
+[105.00s -> 124.00s] 画面为同一静态宇宙背景，主体未变化，镜头无明显移动。
 """
+

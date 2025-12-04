@@ -104,7 +104,7 @@ def init_memory():
             openai_base_url=base_url,
             data_storage_path=data_path,
             assistant_id=assistant_id,  # 使用邀请码作为assistant_id
-            short_term_capacity=7,  # Smaller for demo
+            short_term_capacity=15,  # Smaller for demo
             mid_term_capacity=200,   # Smaller for demo
             long_term_knowledge_capacity=1000,  # Smaller for demo
             mid_term_heat_threshold=10.0,
@@ -252,36 +252,49 @@ def add_multimodal_memory_endpoint():
         conversations = []
         for chunk in video_result.chunks:
             chunk_meta = dict(chunk.metadata)
+            meta_data = {
+                'source_type': chunk_meta.get('source_type', 'file_path'),
+                'video_name': chunk_meta.get('video_name', ''),
+                'time_range': chunk_meta.get('time_range', ''),
+            }
 
-            user_input = chunk_meta.get('transcript') or chunk_meta.get('chunk_summary') or chunk.text
-            user_input = (user_input or '').strip()
-            if chunk_meta.get('chunk_type') == 'videorag_summary':
-                user_input = chunk_meta.get('question', '请总结本视频')
-            if not user_input:
-                user_input = f"[VideoChunk#{chunk.chunk_index}]"
+            chunk_summary = chunk_meta.get('chunk_summary', '').strip()
+            video_name = meta_data['video_name']
+            time_range = meta_data['time_range']
+            user_input = f"{video_name}, {time_range}发生了什么？"
 
-            agent_reply = agent_response or chunk_meta.get('chunk_summary') or chunk.text or chunk_meta.get('transcript')
-            agent_reply = (agent_reply or '').strip()
-            if not agent_reply:
-                agent_reply = '该视频片段未生成可用摘要'
+            agent_reply = chunk_summary or '该视频片段未生成可用摘要'
 
             timestamp = get_timestamp()
-            memory_system.add_memory(
-                user_input=user_input,
-                agent_response=agent_reply,
-                timestamp=timestamp,
-                meta_data={
-                    **chunk_meta,
-                    'chunk_index': chunk.chunk_index,
-                    'converter_provider': 'VideoRAG'
-                }
-            )
+            # 去重：如果 short-term 中已有相同 video_name 和 time_range 的记忆，则跳过添加
+            existing = False
+            try:
+                for m in memory_system.short_term_memory.get_all():
+                    m_md = m.get('meta_data', {}) or {}
+                    if (
+                        m_md.get('video_name') == meta_data.get('video_name')
+                        and m_md.get('time_range') == meta_data.get('time_range')
+                    ):
+                        existing = True
+                        break
+            except Exception:
+                existing = False
+
+            if not existing:
+                memory_system.add_memory(
+                    user_input=user_input,
+                    agent_response=agent_reply,
+                    timestamp=timestamp,
+                    meta_data=meta_data
+                )
+            else:
+                print(f"Skipping duplicate memory for {meta_data.get('video_name')} {meta_data.get('time_range')}")
 
             conversations.append({
                 'user_input': user_input,
                 'agent_response': agent_reply,
                 'timestamp': timestamp,
-                'meta_data': chunk_meta
+                'meta_data': meta_data
             })
 
         return jsonify({
@@ -311,9 +324,8 @@ def get_memory_state():
     try:
         # Get short-term memory
         short_term = memory_system.short_term_memory.get_all()
-        
-        # Get mid-term memory sessions (top 5)
         mid_term_sessions = []
+        # Get mid-term memory sessions (top 5)
         for sid, session_data in list(memory_system.mid_term_memory.sessions.items())[:5]:
             mid_term_sessions.append({
                 'id': sid,
@@ -332,7 +344,6 @@ def get_memory_state():
         user_profile = memory_system.user_long_term_memory.get_raw_user_profile(memory_system.user_id)
         user_knowledge = memory_system.user_long_term_memory.get_user_knowledge()
         assistant_knowledge = memory_system.assistant_long_term_memory.get_assistant_knowledge()
-        
         return jsonify({
             'short_term': {
                 'capacity': memory_system.short_term_memory.max_capacity,

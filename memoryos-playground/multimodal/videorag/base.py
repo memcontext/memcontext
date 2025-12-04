@@ -8,8 +8,7 @@ from ._utils import EmbeddingFunc
 
 @dataclass
 class QueryParam:
-    mode: Literal["local", "global", "naive"] = "global"
-    only_need_context: bool = False
+    mode: Literal["local", "global", "naive", "videorag"] = "global"
     response_type: str = "Multiple Paragraphs"
     level: int = 2
     top_k: int = 20
@@ -17,6 +16,7 @@ class QueryParam:
     naive_max_token_for_text_unit = 12000
     # videorag search
     only_need_context: bool = False
+    wo_reference: bool = False
 
 
 TextChunkSchema = TypedDict(

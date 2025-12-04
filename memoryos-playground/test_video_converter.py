@@ -46,13 +46,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--deepseek-key",
         type=str,
-        default=None,
+        default="sk-49ac078416f84608b8bd709210fa2d93",
         help="DeepSeek API Key（可选，若已在环境变量中配置则无需传入）",
     )
     parser.add_argument(
         "--siliconflow-key",
         type=str,
-        default=None,
+        default="sk-obqoqilbxahjmslkvyyuncxvinhuofzgoxnptaqgnnpxwcmx",
         help="硅基流动 API Key，用于 bge-m3 embedding（可选）",
     )
     return parser.parse_args()
@@ -97,20 +97,20 @@ def main() -> None:
         **convert_kwargs,
     )
 
-    print("\n=== Conversion Result ===")
-    print(f"Status: {result.status}")
+    print("\n=== 转换结果 ===")
+    print(f"状态：{result.status}")
     if result.error:
-        print(f"Error: {result.error}")
+        print(f"错误：{result.error}")
 
-    print("\nMetadata:")
+    print("\n元数据：")
     print(json.dumps(result.metadata, ensure_ascii=False, indent=2))
 
-    print(f"\nChunks ({len(result.chunks)} total):")
+    print(f"\n分片（共 {len(result.chunks)} 个）：")
     for chunk in result.chunks:
         meta = json.dumps(chunk.metadata, ensure_ascii=False)
         preview = chunk.text.strip().replace("\n", " ")[:160]
-        print(f"- idx={chunk.chunk_index} meta={meta}")
-        print(f"  text={preview}{'...' if len(chunk.text) > 160 else ''}")
+        print(f"- 序号={chunk.chunk_index} 元数据={meta}")
+        print(f"  文本={preview}{'...' if len(chunk.text) > 160 else ''}")
 
 
 if __name__ == "__main__":

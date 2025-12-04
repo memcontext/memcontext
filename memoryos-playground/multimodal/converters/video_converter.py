@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import shutil
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -51,6 +52,13 @@ class VideoConverter(MultimodalConverter):
             or "./videorag-workdir"
         ).expanduser()
         working_dir.mkdir(parents=True, exist_ok=True)
+
+        # Ensure the video file lives in the working_dir so later steps (e.g., segment captioning)
+        # can still access it after any temp upload directory is cleaned up.
+        target_path = working_dir / video_path.name
+        if video_path != target_path:
+            shutil.copyfile(video_path, target_path)
+            video_path = target_path
 
         llm_config = kwargs.get("llm_config") or self.config.get("llm_config") or deepseek_bge_config
         videorag_params = {
@@ -194,8 +202,13 @@ class VideoConverter(MultimodalConverter):
         loop = always_get_an_event_loop()
         video_name = Path(video_path).stem
         if video_name in videorag.video_segments._data:
-            self._report_progress(0.7, f"视频 {video_name} 已存在，跳过重建")
-            return
+            stored_path = videorag.video_path_db._data.get(video_name)
+            if stored_path and os.path.exists(stored_path):
+                self._report_progress(0.7, f"视频 {video_name} 已存在，跳过重建")
+                return
+            # 已有索引但原视频文件不存在，更新路径为本次提供的文件
+            loop.run_until_complete(videorag.video_path_db.upsert({video_name: video_path}))
+            self._report_progress(0.09, f"视频 {video_name} 重新绑定路径")
 
         self._report_progress(0.08, "注册视频路径")
         loop.run_until_complete(videorag.video_path_db.upsert({video_name: video_path}))

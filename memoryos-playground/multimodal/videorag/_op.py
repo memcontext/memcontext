@@ -32,6 +32,40 @@ from ._videoutil import (
     retrieved_segment_caption,
 )
 
+# --- helpers -------------------------------------------------------------
+
+def _safe_int(value: str) -> int:
+    try:
+        return int(value)
+    except Exception:
+        try:
+            return int(float(value))
+        except Exception:
+            return 0
+
+
+def _time_str_to_seconds(t: Union[str, float, int]) -> float:
+    if isinstance(t, (int, float)):
+        return float(t)
+    t = str(t).strip()
+    if not t:
+        return 0.0
+    if ":" in t:
+        parts = t.split(":")
+        parts = [p.strip() for p in parts if p.strip() != ""]
+        try:
+            parts = [float(p) for p in parts]
+        except Exception:
+            return 0.0
+        while len(parts) < 3:
+            parts.insert(0, 0.0)  # pad to [hh, mm, ss]
+        hours, minutes, seconds = parts[-3], parts[-2], parts[-1]
+        return hours * 3600 + minutes * 60 + seconds
+    try:
+        return float(t)
+    except Exception:
+        return 0.0
+
 def chunking_by_token_size(
     tokens_list: list[list[int]],
     doc_keys,
@@ -654,7 +688,7 @@ async def videorag_query(
         retrieved_segments,
         key=lambda x: (
             '_'.join(x.split('_')[:-1]), # video_name
-            eval(x.split('_')[-1]) # index
+            _safe_int(x.split('_')[-1]) # index
         )
     )
     print(query_for_entity_retrieval)
@@ -718,8 +752,8 @@ async def videorag_query(
     for s_id in caption_results:
         video_name = '_'.join(s_id.split('_')[:-1])
         index = s_id.split('_')[-1]
-        start_time = eval(video_segments._data[video_name][index]["time"].split('-')[0])
-        end_time = eval(video_segments._data[video_name][index]["time"].split('-')[1])
+        start_time = _time_str_to_seconds(video_segments._data[video_name][index]["time"].split('-')[0])
+        end_time = _time_str_to_seconds(video_segments._data[video_name][index]["time"].split('-')[1])
         start_time = f"{start_time // 3600}:{(start_time % 3600) // 60}:{start_time % 60}"
         end_time = f"{end_time // 3600}:{(end_time % 3600) // 60}:{end_time % 60}"
         text_units_section_list.append([video_name, start_time, end_time, caption_results[s_id]])
@@ -825,7 +859,7 @@ async def videorag_query_multiple_choice(
         retrieved_segments,
         key=lambda x: (
             '_'.join(x.split('_')[:-1]), # video_name
-            eval(x.split('_')[-1]) # index
+            _safe_int(x.split('_')[-1]) # index
         )
     )
     print(query_for_entity_retrieval)
@@ -889,8 +923,8 @@ async def videorag_query_multiple_choice(
     for s_id in caption_results:
         video_name = '_'.join(s_id.split('_')[:-1])
         index = s_id.split('_')[-1]
-        start_time = eval(video_segments._data[video_name][index]["time"].split('-')[0])
-        end_time = eval(video_segments._data[video_name][index]["time"].split('-')[1])
+        start_time = _time_str_to_seconds(video_segments._data[video_name][index]["time"].split('-')[0])
+        end_time = _time_str_to_seconds(video_segments._data[video_name][index]["time"].split('-')[1])
         start_time = f"{start_time // 3600}:{(start_time % 3600) // 60}:{start_time % 60}"
         end_time = f"{end_time // 3600}:{(end_time % 3600) // 60}:{end_time % 60}"
         text_units_section_list.append([video_name, start_time, end_time, caption_results[s_id]])
