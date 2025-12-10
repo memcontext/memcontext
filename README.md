@@ -1,4 +1,4 @@
-# 🧠 MemContext: The Next-Gen Multi-modal Agent Memory Architecture
+# 🧠 ContextBase: The Next Generation Multimodal Agent Memory Architecture
 
 <div align="center">
 
@@ -11,7 +11,7 @@
 
 *Store Everything · Search Everything · Frame-Level Precision*
 
-[中文文档](README_CN.md) • [Core Features](#-core-features) • [Architecture](#-architecture) • [Use Cases](#-use-cases)
+[中文文档](README_zh.md) • [Core Features](#-core-features) • [Architecture](#-architecture) • [Use Cases](#-use-cases)
 
 </div>
 
@@ -19,11 +19,11 @@
 
 ## 📖 Introduction
 
-**MemContext is designed to build a persistent, high-fidelity, and evolutionary "Second Brain" for AI Agents.**
+**ContextBase is designed to build a persistent, high-fidelity, and evolutionary "Second Brain" for AI Agents.**
 
-Most existing Memory frameworks forcibly "flatten" the rich physical world into pure text, resulting in the loss of visual details and spatio-temporal context dislocation. **MemContext refuses this dimensional reduction.**
+Most existing Memory frameworks forcibly "flatten" the rich physical world into pure text, resulting in the loss of visual details and spatio-temporal context dislocation. **ContextBase refuses this dimensional reduction.**
 
-We are a **Multi-modal Native** memory framework engineered to ingest video, audio, and document streams in their raw, high-fidelity forms. Whether it's hundreds of hours of raw footage or a subtle visual cue in the background of a video, MemContext delivers a closed loop from **Omni-modal Ingestion** and **Stream Storage** to **Frame-level Retrieval**.
+We are a **Multi-modal Native** memory framework engineered to ingest video, audio, and document streams in their raw, high-fidelity forms. Whether it's hundreds of hours of raw footage or a subtle visual cue in the background of a video, ContextBase delivers a closed loop from **Omni-modal Ingestion** and **Stream Storage** to **Frame-level Retrieval**.
 
 We are not building a static database; we are building **Native Spatio-Temporal Perception** for Agents.
 
@@ -32,7 +32,7 @@ We are not building a static database; we are building **Native Spatio-Temporal 
 ## ✨ Core Features
 
 ### 1. ♾️ Omni-Modal Storage & Retrieval
-**Break the Text-to-Text barrier.** MemContext unifies the processing paradigm for heterogeneous data.
+**Break the Text-to-Text barrier.** ContextBase unifies the processing paradigm for heterogeneous data.
 * **Unified Input:** Seamlessly handles Video, Audio, Image, Documents, and Text.
 * **Native Multi-modal Indexing:** Utilizes a "Parallel Retrieval Workflow" to index visual and auditory signals directly via vector embeddings, rather than relying solely on generated text descriptions/captions.
 * **Cross-Modal Search:** Supports "Search Video by Image" and "Search Text by Audio."
@@ -45,7 +45,7 @@ We are not building a static database; we are building **Native Spatio-Temporal 
 
 ### 3. 🎯 0.1s Spatio-Temporal Precision
 **Eliminate Timestamp Hallucinations.**
-* Traditional RAG/Memory systems only tell you "which file" the answer is in. MemContext tells you **"which minute and which second."**
+* Traditional RAG/Memory systems only tell you "which file" the answer is in. ContextBase tells you **"which minute and which second."**
 * **SOTA Precision:** Retrieves and locates video/audio segments with **0.1-second accuracy**.
 * **Value:** Returns precise, 0.1s key snippets (The Needle) rather than bloated 1GB files (The Haystack).
 
@@ -53,10 +53,10 @@ We are not building a static database; we are building **Native Spatio-Temporal 
 
 ## 🏗️ Architecture
 
-MemContext draws inspiration from human cognitive processes and OS storage structures, adopting a tiered storage architecture paired with a dual-path retrieval engine.
+ContextBase draws inspiration from human cognitive processes and OS storage structures, adopting a tiered storage architecture paired with a dual-path retrieval engine.
 
 <div align="center">
-  <img src="MemContext_Workflow_v0.png" alt="MemContext Architecture Workflow" width="100%">
+  <img src="ContextBase_Workflow_v0.png" alt="ContextBase Architecture Workflow" width="100%">
 </div>
 
 ### 🧠 Memory Lifecycle
@@ -77,32 +77,35 @@ Supports natural language, image, and video segment queries:
 
 ## 🚀 Use Cases
 
-### ✂️ Intelligent Video Editing Co-Pilot
-* **Scenario:** A documentary editor faces TBs of B-Roll and needs to find a shot of "the protagonist laughing by the sea with seagull sounds in the background."
-* **The MemContext Solution:**
-    * **Rapid Screening:** Uses semantic understanding to lock onto files containing "sea" and "laugh."
-    * **Surgical Precision:** Combines Audio Modality (seagull recognition) and Visual Modality (protagonist laughing) with **0.1s precision** to output exact `Inpoint` and `Outpoint` timecodes.
-    * **Result:** The Agent generates a ready-to-use Edit Decision List (EDL), eliminating manual seeking.
+### 1. A Truly "Understanding" Companion Agent
+* **Pain Point:** Current chatbots forget everything after a conversation. You mentioned "I'm on a diet" last week, and today it still recommends high-calorie restaurants. You mentioned "I hate cilantro" three months ago, and it has completely forgotten.
+* **ContextBase Memory Manifestation:**
+    * **LTM (Long-Term Memory - Profile Evolution):** When you've repeatedly expressed a preference for "low-sugar diet" through voice or text in multiple conversations, the system automatically crystallizes this **high-heat information** into the `User Profile`.
+    * **Memory Recall:** When you ask "What should I have for lunch today?", the Agent doesn't randomly recommend. Instead, it queries **LTM**: "I remember you're currently on a **keto diet (long-term memory)**, and last Friday (mid-term memory) you mentioned wanting to try that new salad place, but the line was too long. How about trying it today?"
+    * **Value:** Evolves from "question-answer" interactions to **proactive care across time periods**.
 
-### 🖼️ Next-Gen Context-Aware Gallery
-* **Scenario:** A user wants to recall a memory, not just a file: "Find photos from 2 years ago when we discussed the startup plan at that cafe playing jazz."
-* **The MemContext Solution:**
-    * **Cross-Modal Association:** A complex compound query. The system retrieves image content (Cafe), ambient audio (Jazz stream), and dialogue records (Startup plan text).
-    * **Memory Evocation:** Links fragmented images with the sound and conversation of that moment, reconstructing the scene rather than just returning a static JPEG.
+### 2. Unified Brain for Long-Term Projects
+* **Pain Point:** In a project spanning half a year, early meeting recordings, whiteboard sketches, and current code documentation are fragmented. It's difficult to ask AI: "How does our current approach differ from the ideas we had during the first brainstorming session two months ago?"
+* **ContextBase Memory Manifestation:**
+    * **MTM (Medium-Term Memory - Heat-Based Recall):** Although the "first brainstorming session" was two months ago, because it was the project's starting point with high **Visit Frequency ($N_{visit}$)**, it remains "warm" in MTM and hasn't been forgotten.
+    * **Cross-Modal Verification:** The Agent can simultaneously retrieve the whiteboard photo from two months ago (visual memory) and the meeting recording (auditory memory), comparing them with the current design document (text input).
+    * **Value:** Connects isolated time slices, prevents forgetting the project's "original intent", and provides consistent oversight across months.
 
-### 🕵️‍♂️ Legal AI & Evidence Analysis
-* **Scenario:** An Agent needs to find contradictions in 50 hours of witness testimony video.
-* **The MemContext Solution:** The Agent queries specific actions or statements (e.g., "Find every time the suspect looked at their watch"). The system returns video slices precise to 0.1s for immediate verification.
+### 3. Companion Learning Tutor
+* **Pain Point:** Traditional educational AI doesn't know your learning curve. It doesn't know you got stuck on a concept 5 minutes ago, nor that you mastered a related foundational concept 3 days ago in another video.
+* **ContextBase Memory Manifestation:**
+    * **STM (Short-Term Memory - Context Awareness):** Right now, when you frown at a problem (camera captures expression or hears a sigh), STM captures your confusion.
+    * **Knowledge Association:** The Agent retrieves **LTM** and discovers you spent a long time on "calculus chain rule" in a video course a month ago (high Interaction Depth $L_{interaction}$).
+    * **Proactive Intervention:** "It looks like you're stuck on this step. This is similar to the 'chain rule' we reviewed last month (memory recall). Remember that red sphere demonstration animation? Let me pull it up for you."
+    * **Value:** Establishes continuity in learning history, providing **personalized assistance tailored to individual needs**.
 
-### 🎓 Online Education & Knowledge Extraction
-* **Scenario:** A student wants to review the specific derivation of the "Attention Mechanism in Transformers" from a 100-hour semester course.
-* **The MemContext Solution:**
-    * **Infinite Stream:** Indexes the entire semester's video.
-    * **Knowledge Localization:** Instead of watching the whole lecture, the system jumps to the **exact 2-minute fragment** where the professor draws the formula on the blackboard, synced with the speech transcript.
-
-### 👓 Wearable AI & Episodic Memory
-* **Scenario:** A smart glass user asks, "Where did I leave my AirPods?"
-* **The MemContext Solution:** Indexes Ego-centric video streams in real-time. Using **Visual Object Grounding**, it searches for the visual features of "AirPods" (without relying on text tags), backtracking to the last interaction frame to provide a location snapshot.
+### 4. 🏠 Smart Home "Butler Memory"
+* **Pain Point:** Smart speakers can only execute commands; they lack a sense of family history.
+* **ContextBase Memory Manifestation:**
+    * **Episodic Memory:** User: "I want to watch that video from last New Year when we all made dumplings together, I think grandma was teaching me how to fold the edges."
+    * **Complex Semantic Localization:** The system doesn't search by filename, but understands "New Year (temporal context)", "everyone (multi-person recognition)", "making dumplings (action recognition)", "grandma teaching me (interaction relationship)".
+    * **High-Precision Presentation:** Directly locates and plays **that 30-second heartwarming clip**, rather than dumping the entire 2-hour family recording on you.
+    * **Value:** Stores family highlights, not just cold files.
 
 ---
 
@@ -112,7 +115,7 @@ Supports natural language, image, and video segment queries:
 
 ## 🤝 Contributing
 
-MemContext is under active development. If you are interested in Multi-modal RAG, Agent Memory Systems, or Vector Search, please Star this repo and follow our progress.
+ContextBase is under active development. If you are interested in Multi-modal RAG, Agent Memory Systems, or Vector Search, please Star this repo and follow our progress.
 
 ## 📜 License
 
