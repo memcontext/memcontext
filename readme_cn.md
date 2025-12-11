@@ -1,469 +1,120 @@
-# MemContext
+# 🧠 MemContext: 下一代多模态Agent记忆框架
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/eb3b167b-1ace-476e-89dc-1a7891356e0b" alt="logo" width="400"/>
-</div>
-<p align="center">
-  <a href="https://arxiv.org/abs/2506.06326">
-    <img src="https://img.shields.io/badge/Arxiv-paper-red" alt="Mem0 Discord">
-  </a>
-  <a href="#contact-us">
-    <img src="https://img.shields.io/badge/Wechat-群二维码-green" alt="Mem0 PyPI - Downloads">
-  </a>
-  <a href="https://www.youtube.com/watch?v=WHQu8fpEOaU" target="blank">
-    <img src="https://img.shields.io/badge/Youtube-Video-red" alt="Npm package">
-  </a>
-  <a href="https://discord.gg/SqVj7QvZ" target="_blank">
-    <img src="https://img.shields.io/badge/Discord-Join_us-yellow" alt="Discord">
-  </a>
-  <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank">
-    <img src="https://img.shields.io/badge/License-Apache_2.0-blue" alt="License: Apache 2.0">
-  </a>
-</p>
 
-<h5 align="center"> 🎉 如果您喜欢我们的项目，请在 GitHub 上给我们一个星 ⭐ 以获取最新更新。</h5>
+![License](https://img.shields.io/badge/license-Apache%202.0-blue)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![Status](https://img.shields.io/badge/Status-In%20Development-orange)
+![Multi-modal](https://img.shields.io/badge/Modality-Audio%20|%20Video%20|%20Image%20|%20Document%20|%20Text-green)
 
-**MemContext** 旨在为个性化 AI 智能体提供记忆操作系统，以实现更连贯、个性化和情境感知的交互。它从操作系统的内存管理原理中汲取灵感，采用分层存储架构，包含四个核心模块：存储、更新、检索和生成，以实现全面高效的记忆管理。在 LoCoMo 基准测试中，该模型在 F1 和 BLEU-1 分数上平均提升了 **49.11%** 和 **46.18%**。
+**首个为 AI Agent 打造的“全模态”记忆框架**
 
-  - **论文**: <a href="[https://arxiv.org/abs/2506.06326](https://arxiv.org/abs/2506.06326)" target="_blank">[https://arxiv.org/abs/2506.06326](https://arxiv.org/abs/2506.06326)</a>
-  - **网站**: <a href="[https://baijia.online/memcontext/](https://baijia.online/memcontext/)" target="_blank">[https://baijia.online/memcontext/](https://baijia.online/memcontext/)</a>
-  - **文档**: <a href="[https://bai-lab.github.io/MemContext/docs](https://bai-lab.github.io/MemContext/docs)" target="_blank">[https://bai-lab.github.io/MemContext/docs](https://bai-lab.github.io/MemContext/docs)</a>
-  - **YouTube 视频**: **MemContext MCP + RAG Agent That Can Remember Anything**
-  - <a href="[https://www.youtube.com/watch?v=WHQu8fpEOaU](https://www.youtube.com/watch?v=WHQu8fpEOaU) ">[https://www.youtube.com/watch?v=WHQu8fpEOaU](https://www.youtube.com/watch?v=WHQu8fpEOaU) </a>
+*存万物 · 查万物 · 帧级定位*
 
-<span id='features'/>
-
-## ✨ 主要特性
-
-  * 🏆 **顶级的记忆管理性能**
-    </br> 在长期记忆基准测试中取得 SOTA 成果，在 LoCoMo 基准上 F1 分数提升 49.11%，BLEU-1 分数提升 46.18%。
-
-  * 🧠 **即插即用的记忆管理架构**
-    </br> 支持无缝集成的可插拔记忆模块——包括存储引擎、更新策略和检索算法。
-
-  * ✨ **轻松创建智能体工作流** (**MemContext-MCP**)
-    </br> 通过调用 MCP 服务器提供的模块化工具，为各种 AI 应用注入长期记忆能力。
-
-  * 🌐 **通用大语言模型支持**
-    </br> MemContext 无缝集成各种大语言模型 (例如 OpenAI, Deepseek, Qwen ...)。
-
-<span id='news'/>
-
-## 📣 最新消息
-
-  * *<mark>[new]</mark>* 🔥🔥🔥 **[2025-07-15]**: **🔌 支持** 向量数据库 [Chromadb](https://www.google.com/search?q=%23memcontext_chromadb-getting-started)
-  * *<mark>[new]</mark>* 🔥🔥🔥 **[2025-07-15]**: **🔌 集成** [Docker](https://www.google.com/search?q=%23docker-getting-started) 到部署流程
-  * *<mark>[new]</mark>* 🔥🔥 **[2025-07-14]**: **⚡ 加速** MCP 并行化
-  * *<mark>[new]</mark>* 🔥🔥 **[2025-07-14]**: **🔌 支持** BGE-M3 & Qwen3 嵌入模型 (PyPI 和 MCP)
-  * *<mark>[new]</mark>* 🔥 **[2025-07-09]**: **📊 评估** MemContext 在 LoCoMo 数据集上的表现: 公开可用 [👉复现](https://www.google.com/search?q=%23reproduce)
-  * *<mark>[new]</mark>* 🔥 **[2025-07-08]**: **🏆 新增配置参数**
-  * 新增参数配置: **similarity_threshold**。配置文件请参见 📖 [文档](https://bai-lab.github.io/MemContext/docs) 页面。
-  * *<mark>[new]</mark>* **[2025-07-07]**: **🚀 5倍速度提升**
-  * MemContext (PYPI) 实现已升级：通过并行化优化，**速度提升5倍** (延迟降低)。
-  * *<mark>[new]</mark>* **[2025-07-07]**: **✨ 现已支持 R1 模型**
-  * MemContext 支持配置和使用 **Deepseek-r1 和 Qwen3** 等推理模型。
-  * *<mark>[new]</mark>* **[2025-07-07]**: **✨MemContext Playground 上线**
-  * **MemContext Platform** 的 Playground 已经上线！[👉MemContext Platform](https://baijia.online/memcontext/)。如果您需要**邀请码**，请随时 [联系我们](https://www.google.com/search?q=%23community)。
-  * *<mark>[new]</mark>* **[2025-06-15]**:🛠️ 开源 **MemContext-MCP** 发布！现在可在智能体客户端上配置，以实现无缝集成和定制。[👉 MemContext-MCP](https://www.google.com/search?q=%23memcontext-mcp-getting-started)。
-  * **[2025-05-30]**: 📄 论文-**Memory OS of AI Agent** 已在 arXiv 上发布: [https://arxiv.org/abs/2506.06326](https://arxiv.org/abs/2506.06326)。
-  * **[2025-05-30]**: **MemContext** 初始版本发布！具有短期、中期和长期角色记忆，以及自动用户画像和知识更新功能。
-
-<span id='list'/>
-
-## 🔥 MemContext 支持列表
-
-<table>
-<thead>
-<tr>
-<th>类型</th>
-<th>名称</th>
-<th>开源</th>
-<th>支持</th>
-<th>配置</th>
-<th>描述</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td rowspan="3">智能体客户端</td>
-<td><strong>Claude Desktop</strong></td>
-<td>❌</td>
-<td>✅</td>
-<td>claude_desktop_config.json</td>
-<td>Anthropic 官方客户端</td>
-</tr>
-<tr>
-<td><strong>Cline</strong></td>
-<td>✅</td>
-<td>✅</td>
-<td>VS Code settings</td>
-<td>VS Code 扩展</td>
-</tr>
-<tr>
-<td><strong>Cursor</strong></td>
-<td>❌</td>
-<td>✅</td>
-<td>Settings panel</td>
-<td>AI 代码编辑器</td>
-</tr>
-<tr>
-<td rowspan="6">模型提供商</td>
-<td><strong>OpenAI</strong></td>
-<td>❌</td>
-<td>✅</td>
-<td>OPENAI_API_KEY</td>
-<td>GPT-4, GPT-3.5, 等.</td>
-</tr>
-<tr>
-<td><strong>Anthropic</strong></td>
-<td>❌</td>
-<td>✅</td>
-<td>ANTHROPIC_API_KEY</td>
-<td>Claude 系列</td>
-</tr>
-<tr>
-<td><strong>Deepseek-R1</strong></td>
-<td>✅</td>
-<td>✅</td>
-<td>DEEPSEEK_API_KEY</td>
-<td>中文大模型</td>
-</tr>
-<tr>
-<td><strong>Qwen/Qwen3</strong></td>
-<td>✅</td>
-<td>✅</td>
-<td>QWEN_API_KEY</td>
-<td>阿里巴巴通义千问</td>
-</tr>
-<tr>
-<td><strong>vLLM</strong></td>
-<td>✅</td>
-<td>✅</td>
-<td>本地部署</td>
-<td>本地模型推理</td>
-</tr>
-<tr>
-<td><strong>Llama_factory</strong></td>
-<td>✅</td>
-<td>✅</td>
-<td>本地部署</td>
-<td>本地微调部署</td>
-</tr>
-</tbody>
-</table>
-所有模型调用均使用 OpenAI API 接口；您需要提供 API 密钥和基础 URL。
-
-## 📑 目录
-
-  * <a href='#features'>✨ 特性</a>
-  * <a href='#news'>🔥 最新消息</a>
-  * <a href='#list'>🔍 支持列表</a>
-  * <a href='#structure'> 📁 项目结构</a>
-  * <a href='#pypi-mode'>🎯 快速入门</a>
-      * <a href='pypi-mode'>通过 PYPI 安装 MemContext</a>
-      * <a href='#MCP-mode'>MemContext-MCP</a>
-      * <a href='https://www.google.com/search?q=%23memcontext_chromadb-getting-started'>MemContext-chromadb</a>
-      * <a href='https://www.google.com/search?q=%23docker-getting-started'>Docker</a>
-  * <a href='#todo'>☑️ 待办事项</a>
-  * <a href='https://www.google.com/search?q=%23reproduce'>🔬 如何复现论文中的结果</a>
-  * <a href='#doc'>📖 文档</a>
-  * <a href='#cite'>🌟 引用</a>
-  * <a href='https://www.google.com/search?q=%23community'>🤝 加入社区</a>
-
-<span id='vedio'/>
-
-<span id='structure'/>
-
-## 🏗️ 系统架构
-
-<img src="https://github.com/user-attachments/assets/09200494-03a9-4b7d-9ffa-ef646d9d51f0" width="80%" alt="image">
-
-## 🏗️ 项目结构
-
-```
-memcontext/
-├── __init__.py         # 初始化 MemContext 包
-├── __pycache__/        # Python 缓存目录 (自动生成)
-├── long_term.py        # 管理长期角色记忆 (用户画像, 知识)
-├── memcontext.py         # MemContext 主类，协调所有组件
-├── mid_term.py         # 管理中期记忆，整合短期交互
-├── prompts.py          # 包含用于 LLM 交互的提示 (例如，摘要，分析)
-├── retriever.py        # 从所有记忆层检索相关信息
-├── short_term.py       # 管理近期交互的短期记忆
-└── updater.py          # 处理记忆更新，包括在不同层之间传递信息
-└── utils.py            # 库中使用的工具函数
-```
-
-<span id='pypi-mode'/>
-
-## 📖 MemContext_PyPi 上手指南
-
-### 环境要求
-
-  * Python >= 3.10
-  * conda create -n MemContext python=3.10
-  * conda activate MemContext
-
-### 安装
-
-#### 从 PyPi 下载
-
-```bash
-pip install memcontext-pro -i https://pypi.org/simple
-```
-
-#### 从 GitHub 下载 (最新版本)
-
-```bash
-git clone https://github.com/LifeContext/memcontext.git
-cd memcontext/memcontext-pypi
-pip install -r requirements.txt
-```
-
-### 基本用法
-
-```python
-import os
-from memcontext import Memcontext
-
-# --- 基本配置 ---
-USER_ID = "demo_user"
-ASSISTANT_ID = "demo_assistant"
-API_KEY = "YOUR_OPENAI_API_KEY"  # 替换为您的密钥
-BASE_URL = ""  # 可选：如果使用自定义 OpenAI 端点
-DATA_STORAGE_PATH = "./simple_demo_data"
-LLM_MODEL = "gpt-4o-mini"
-
-def simple_demo():
-    print("MemContext 简单演示")
-
-    # 1. 初始化 MemContext
-    print("正在初始化 MemContext...")
-    try:
-        memo = Memcontext(
-            user_id=USER_ID,
-            openai_api_key=API_KEY,
-            openai_base_url=BASE_URL,
-            data_storage_path=DATA_STORAGE_PATH,
-            llm_model=LLM_MODEL,
-            assistant_id=ASSISTANT_ID,
-            short_term_capacity=7,
-            mid_term_heat_threshold=5,
-            retrieval_queue_capacity=7,
-            long_term_knowledge_capacity=100,
-            # 支持 Qwen/Qwen3-Embedding-0.6B, BAAI/bge-m3, all-MiniLM-L6-v2
-            embedding_model_name="BAAI/bge-m3"
-        )
-        print("MemContext 初始化成功！n")
-    except Exception as e:
-        print(f"错误: {e}")
-        return
-
-    # 2. 添加一些基本记忆
-    print("正在添加一些记忆...")
-
-    memo.add_memory(
-        user_input="你好！我是汤姆，我在旧金山做数据科学家。",
-        agent_response="你好汤姆！很高兴认识你。数据科学是一个非常令人兴奋的领域。你主要处理什么样的数据？"
-    )
-
-    test_query = "你记得我的工作是什么吗？"
-    print(f"用户: {test_query}")
-
-    response = memo.get_response(
-        query=test_query,
-    )
-
-    print(f"助手: {response}")
-
-if __name__ == "__main__":
-    simple_demo()
-```
-
-<span id='MCP-mode'/>
-
-## 📖 MemContext-MCP 上手指南
-
-### 🔧 核心工具
-
-#### 1. `add_memory`
-
-将用户与 AI 助手之间的对话内容保存到记忆系统中，以建立持久的对话历史和上下文记录。
-
-#### 2. `retrieve_memory`
-
-根据查询从记忆系统中检索相关的历史对话、用户偏好和知识信息，帮助 AI 助手理解用户的需求和背景。
-
-#### 3. `get_user_profile`
-
-获取从历史对话分析中生成的用户画像，包括用户的个性特征、兴趣偏好和相关知识背景。
-
-### 1. 安装依赖
-
-```bash
-cd memcontext-mcp
-pip install -r requirements.txt
-```
-
-### 2. 配置
-
-编辑 `config.json`：
-
-```json
-{
-  "user_id": "用户ID",
-  "openai_api_key": "OpenAI API 密钥",
-  "openai_base_url": "https://api.openai.com/v1",
-  "data_storage_path": "./memcontext_data",
-  "assistant_id": "助手ID",
-  "llm_model": "gpt-4o-mini",
-  "embedding_model_name": "BAAI/bge-m3"
-}
-```
-
-### 3. 启动服务器
-
-```bash
-python server_new.py --config config.json
-```
-
-### 4. 测试
-
-```bash
-python test_comprehensive.py
-```
-
-### 5. 在 Cline 和其他客户端上配置
-
-复制 `mcp.json` 文件，并确保文件路径正确。
-
-```bash
-"command": "/root/miniconda3/envs/memos/bin/python"
-# 这应该更改为您虚拟环境的 Python 解释器
-```
-
-## 📖MemContext_Chromadb 上手指南
-
-### 1. 安装依赖
-
-```bash
-cd memcontext-chromadb
-pip install -r requirements.txt
-```
-
-### 2. 测试
-
-```bash
-# 编辑信息在 comprehensive_test.py 中
-    memcontext = Memcontext(
-        user_id='travel_user_test',
-        openai_api_key='',
-        openai_base_url='',
-        data_storage_path='./comprehensive_test_data',
-        assistant_id='travel_assistant',
-        embedding_model_name='BAAI/bge-m3',
-        mid_term_capacity=1000,
-        mid_term_heat_threshold=13.0,
-        mid_term_similarity_threshold=0.7,
-        short_term_capacity=2
-    )
-python3 comprehensive_test.py
-# 切换嵌入模型时，请确保使用不同的数据存储路径。
-```
-
-## 📖Docker 上手指南
-
-您可以通过两种方式使用 Docker 运行 MemContext：拉取官方镜像或从 Dockerfile 构建您自己的镜像。这两种方法都适用于快速设置、测试和生产部署。
-
-### 选项 1: 拉取官方镜像
-
-```bash
-# 拉取最新的官方镜像
-docker pull ghcr.io/bai-lab/memcontext:latest
-
-docker run -it --gpus=all ghcr.io/bai-lab/memcontext /bin/bash
-```
-
-### 选项 2: 从 Dockerfile 构建
-
-```bash
-# 克隆仓库
-git clone https://github.com/LifeContext/memcontext.git
-
-cd memcontext
-
-# 构建 Docker 镜像 (确保 Dockerfile 存在)
-docker build -t memcontext .
-
-docker run -it --gpus=all memcontext /bin/bash
-```
-
-## 🎯 复现
-
-```bash
-cd eval
-# 在代码中配置 API 密钥和其他设置
-python3 main_loco_parse.py
-python3 evalution_loco.py
-```
-
-<span id='todo'/>
-
-## ☑️ 待办事项
-
-MemContext 正在不断发展！以下是即将推出的功能：
-
-  - **进行中🚀**: **集成基准测试**: 标准化的基准测试套件，用于 Mem0、Zep 和 OpenAI 的跨模型比较
-  - 🏗️ 实现跨不同系统的无缝记忆交换和集成。
-
-有想法或建议吗？欢迎贡献！请随时提交 issues 或 pull requests！🚀
-
-<span id='doc'/>
-
-## 📖 文档
-
-更详细的文档即将推出 🚀，我们将在 [文档](https://bai-lab.github.io/MemContext/docs) 页面更新。
-
-<span id='cite'/>
-
-## 📣 引用
-
-**如果您觉得这个项目有用，请考虑引用我们的论文：**
-
-```bibtex
-@misc{kang2025memcontextaiagent,
-      title={Memory OS of AI Agent}, 
-      author={Jiazheng Kang and Mingming Ji and Zhe Zhao and Ting Bai},
-      year={2025},
-      eprint={2506.06326},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2506.06326}, 
-}
-```
-
-<span id='related'/>
-
-<span id='community'/>
-
-## 🎯 联系我们
-
-百家 AI 是由北京邮电大学白婷副教授指导的研究团队，致力于为 AI 智能体打造情感丰富、记忆超群的大脑。
-
-🤝 合作与建议: baiting@bupt.edu.cn
-
-📣 关注我们的**微信公众号**，加入**微信群**或 <img src="[https://img.shields.io/badge/Discord-yellow](https://img.shields.io/badge/Discord-yellow)" alt="Discord"> [https://discord.gg/SqVj7QvZ](https://discord.gg/SqVj7QvZ) 获取最新动态。
-
-<div style="display: flex; justify-content: center; gap: 20px;">
-  <img src="https://github.com/user-attachments/assets/42651f49-f1f7-444d-9455-718e13ed75e9" alt="百家Agent公众号" width="250"/> 
-  <img src="https://github.com/user-attachments/assets/b1b53846-cfc3-4814-bfa5-8e88b3621b9e" alt="微信群二维码" width="250"/>
+[English](README.md) • [核心特性](#-核心特性) • [架构设计](#-架构设计) • [应用场景](#-应用场景)
 
 </div>
 
-## 🌟 Star 历史
+---
 
-[![Star History Chart](https://api.star-history.com/svg?repos=BAI-LAB/MemContext&type=Timeline)](https://www.star-history.com/#BAI-LAB/MemContext&Timeline)
+## 📖 简介
 
-## 免责声明
+**MemContext 致力于为 AI Agent 构建一个持久化、高保真、可进化的“第二大脑”。**
 
-本项目 MemContext (Memory Operation System) 由百家 AI 团队开发，与 memoryOS ([https://memcontext.com](https://memcontext.com)) 无任何关联。此处使用“MemContext”名称仅为学术讨论目的。
+现有的 Memory 框架大多强行将丰富多彩的物理世界“压扁”为纯文本（Text-only），导致了视觉细节丢失和时空上下文错位。**MemContext 拒绝这种降维压缩。** 
+
+MemContext是**多模态原生 (Multi-modal Native)** 的记忆框架，旨在以原始的高保真形式处理视频、音频和文档流。无论是数百小时的影视素材库，还是画面背景里隐藏的一个细微彩蛋，MemContext 都能完成从**全模态摄入**、**流式存储**到**帧级 (Frame-level) 检索**的高精度闭环。
+
+我们构建的不是静态数据库，而是 Agent 的**原生时空感知**。
+
+---
+
+## ✨ 核心特性
+
+### 1. ♾️ 全模态存储与检索
+**超越 Text-to-Text 的限制** MemContext 统一了异构数据的处理范式。
+* **输入:** 统一处理视频、音频、图像、文档及文本。
+* **多模态原生索引:** 采用“并行检索工作流”，直接对视觉和听觉信号建立向量索引，而非仅仅依赖其文字描述。
+* **跨模态检索:** 支持“以图搜视”、“以音搜文”。
+
+### 2. 🎞️ 无限流处理
+**忘掉对有限上下文窗口的焦虑**
+* 专为 **长上下文数据** 和 **24/7 持续运行** 的 Agent 设计。
+* 支持无限时长的视频和连续音频流录入。
+* **动态分块:** 内置连续性检查机制，在处理海量会议记录、影视剧集或监控流时，确保记忆上下文不发生断裂。
+
+### 3. 🎯 0.1秒级时空精定位
+**停止对时间戳的幻觉**
+* 传统RAG与Memory系统只能告诉你“答案在哪个文件”，MemContext 能告诉你**“答案在第几分第几秒”**。
+* **SOTA 级精度:** 能够以 **0.1 秒的精度** 检索并定位视频/音频片段。
+* **价值:** 返回结果不再是臃肿的1GB文件，而是精确命中的0.1秒级关键片段，实现真正的“大海捞针”。
+
+---
+
+## 🏗️ 架构设计
+
+MemContext 借鉴了人类大脑的认知过程以及操作系统的存储结构，采用了分层存储架构配合双路检索引擎。
+
+<div align="center">
+  <img src="MemContext_Workflow_v0.png" alt="MemContext Architecture Workflow" width="100%">
+</div>
+
+### 🧠 记忆生命周期
+数据流经仿生的处理管道：
+1.  **多模态输入:** 统一处理器从异构数据中提取多维特征。
+2.  **STM (短期记忆):** 处理即时上下文流，执行 Embedding 计算与初步过滤。
+3.  **MTM (中期记忆):** 基于会话的缓冲区，引入**热度计算算法 (Heat Calculation)**。系统根据访问频次 ($N_{visit}$)、交互深度 ($L_{interaction}$) 和新近度 ($R_{recency}$) 动态评判数据价值。
+4.  **LTM (长期记忆):** 高热度信息“结晶”为永久存储（用户画像 & 知识库），低价值数据则被从工作记忆中淘汰。
+
+### 🔍 精准检索引擎
+支持自然语言、图像、视频片段等多种查询形式：
+1.  **语义过滤:** 快速从 MTM 中筛选相关会话上下文。
+2.  **向量相似度匹配:** 在 LTM 知识库中进行深度全库扫描。
+3.  **时空定位 (Timestamping):** 执行高精度的帧级定位，锁定具体数据片段。
+4.  **结果聚合:** 将检索到的视频切片、背景知识和对话历史等上下文融合为结构化的上下文列表(Context Dictionary)返回给Agent。
+
+---
+
+## 🚀 应用场景
+
+### ✂️ 智能视频剪辑助手
+* **场景:** 纪录片或综艺剪辑师面对数 TB 的原始素材 (B-Roll)，需要快速找到“主角在海边大笑，且背景有海鸥叫声”的镜头，用于拼接情感高潮段落。
+* **MemContext 方案:** 
+    * **极速粗筛:** 利用语义理解快速锁定包含“海边”和“笑”的视频文件。
+    * **精准刀法:** 结合音频模态（识别海鸥声）和视觉模态（识别主角在海边大笑动作），利用 **0.1s 时空精定位** 能力，直接输出该镜头的 `Inpoint` 和 `Outpoint`时间码。
+    * **结果:** 剪辑师不再需要手动拖动进度条寻找，Agent 直接生成可用的素材剪辑列表（EDL）。
+
+### 🖼️ 下一代情境感知相册
+* **场景:** 用户不仅仅想找“某张照片”，而是想找回“一段记忆”。例如：“帮我找两年前我们在那家放着爵士乐的咖啡馆，讨论创业计划时拍的照片。”
+* **MemContext 方案:** 
+    * **跨模态联想:** 这是一个典型的多模态复合查询。系统不仅检索图像内容（咖啡馆），还同时检索当时的背景环境音（爵士乐音频流）以及可能的对话记录（创业计划文本）。
+    * **记忆唤醒:** MemContext 将碎片化的图像与当时的声音、对话链接起来，不仅仅返回一张静态图片，还能重现当时的情景。
+
+### 🕵️‍♂️ 法律与证据分析
+* **场景:** Agent 需要在长达 50 小时的证人证词视频中寻找前后矛盾之处。
+* **MemContext 方案:** Agent 可以查询特定的动作或陈述（例如“找出所有嫌疑人看手表的时刻”），系统将返回精确到 0.1s 的视频切片，即刻验证证据。
+
+### 🎓 在线教育与长视频知识提取
+* **场景:** 学生面对一个学期长达 100 小时的录播课程，想复习教授讲解“Transformer 架构中的 Attention 机制”的具体推导过程。
+* **MemContext 方案:** 
+    * **无限流处理:** 支持对整个学期的课程视频进行索引。
+    * **知识定位:** 学生无需观看整节课，系统直接定位到教授在黑板上画出 Attention 公式的 **2 分钟精准片段**，并同步展示该时刻的语音转写字幕，极大提高学习效率。
+
+### 👓 穿戴式 AI 与第一视角记忆
+* **场景:** 佩戴智能眼镜的用户询问 Agent：“我把 AirPods 落在哪里了？”
+* **MemContext 方案:** 系统对第一视角视频流进行实时索引。通过**视觉物体定位 (Visual Object Grounding)** 技术，系统不依赖文本标签，而是直接检索“AirPods”的视觉特征，回溯并锁定用户最后一次与其交互的画面帧，提供确切的位置快照。
+
+
+---
+
+## ⚡ 快速开始
+
+*(代码库整理中，即将开放)*
+
+## 🤝 贡献指南
+
+MemContext 的核心功能正在紧锣密鼓地开发中。如果你对多模态、RAG 或 Agent Memory 系统感兴趣，欢迎 Star 并关注我们的进展。
+
+## 📜 协议
+
+Apache 2.0
