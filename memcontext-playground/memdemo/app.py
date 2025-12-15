@@ -17,7 +17,6 @@ from memcontext import Memcontext
 # Import utils directly from the playground directory
 from utils import get_timestamp
 from multimodal.converters.video_converter import VideoConverter
-from multimodal.converters.videorag_converter import VideoConverter as VideoRAGConverter
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
@@ -271,12 +270,13 @@ def add_multimodal_memory_endpoint():
         conversations = []
         for chunk in video_result.chunks:
             chunk_meta = dict(chunk.metadata)
-            # 原代码：
+            # 原代码（已注释）：
             # meta_data = {
             #     'source_type': chunk_meta.get('source_type', 'file_path'),
             #     'video_name': chunk_meta.get('video_name', ''),
             #     'time_range': chunk_meta.get('time_range', ''),
             # }
+            
             # 新代码：保存完整的 metadata 信息，包括所有有用的字段
             # 统一生成 name 字段：文件名 + chunk_index
             base_video_name = chunk_meta.get('video_name') or chunk_meta.get('original_filename', '')
