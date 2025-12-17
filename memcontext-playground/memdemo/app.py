@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from memcontext import Memcontext
 # Import utils directly from the playground directory
 from utils import get_timestamp
-from multimodal.converters.video_converter import VideoConverter
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
@@ -105,12 +104,13 @@ def init_memory():
         data_path = './data'
         os.makedirs(data_path, exist_ok=True)
         
-        # 获取 file_storage_base_path（可选，默认与 file_storage 和 memdemo 平齐）
+        # 获取 file_storage_base_path（可选，默认使用 test_storage 目录）
         file_storage_base_path = data.get('file_storage_base_path', '').strip()
         if not file_storage_base_path:
-            # 默认使用项目根目录（memcontext-playground），与 file_storage 和 memdemo 平齐
+            # 默认使用 test_storage 目录，与 example_usage.py 保持一致
             # app.py 在 memdemo/ 目录下，所以上一级目录就是项目根目录
-            file_storage_base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+            file_storage_base_path = os.path.join(project_root, 'test_storage')
         
         memory_system = Memcontext(
             user_id=user_id,
@@ -155,10 +155,6 @@ def init_memory():
 def chat():
     data = request.json
     user_input = data.get('message', '')
-    #这里新加了补充metadata的功能(如果有metadata字段的话)
-    #    user_input = data.get('message', '')
-    user_conversation_meta_data = data.get('metadata', None)
-    relationship_with_user = data.get('relationship', 'friend')
     
     session_id = session.get('memory_session_id')
     if not session_id or session_id not in memory_systems:
@@ -167,16 +163,8 @@ def chat():
     memory_system = memory_systems[session_id]
     
     try:
-        # 原代码：
         # Get response from memcontext (this already adds the memory internally)
-        # response = memory_system.get_response(user_input)
-        
-        # 新代码：传递 metadata 和 relationship 参数
-        response = memory_system.get_response(
-            query=user_input,
-            relationship_with_user=relationship_with_user,
-            user_conversation_meta_data=user_conversation_meta_data
-        )
+        response = memory_system.get_response(user_input)
         
         # Do NOT add memory again here - it's already done in get_response()
         
@@ -421,97 +409,12 @@ def add_multimodal_memory_endpoint():
                 'file_id': result.get('file_id'),
                 'timestamps': result.get('timestamps', []),
                 'progress': progress_events
-            }), 500
-
-        conversations = []
-        for chunk in video_result.chunks:
-            chunk_meta = dict(chunk.metadata)
-            # 原代码（已注释）：
-            # meta_data = {
-            #     'source_type': chunk_meta.get('source_type', 'file_path'),
-            #     'video_name': chunk_meta.get('video_name', ''),
-            #     'time_range': chunk_meta.get('time_range', ''),
-            # }
-            
-            # 新代码：保存完整的 metadata 信息，包括所有有用的字段
-            # 统一生成 name 字段：文件名 + chunk_index
-            base_video_name = chunk_meta.get('video_name') or chunk_meta.get('original_filename', '')
-            chunk_idx = chunk_meta.get('chunk_index', 0)
-            if base_video_name:
-                name_field = f"{base_video_name}_chunk_{chunk_idx}"
-                # 避免重复附加 chunk_XX
-                if f"chunk_{chunk_idx}" in base_video_name:
-                    name_field = base_video_name
-            else:
-                name_field = f"video_chunk_{chunk_idx}"
-
-            meta_data = {
-                'source_type': chunk_meta.get('source_type', 'file_path'),
-                'video_name': chunk_meta.get('video_name', ''),
-                'name': name_field,
-                'time_range': chunk_meta.get('time_range', ''),
-                # 内容分析字段
-                'chunk_summary': chunk_meta.get('chunk_summary', ''),
-                'scene_label': chunk_meta.get('scene_label', ''),
-                'objects_detected': chunk_meta.get('objects_detected', []),
-                'actions': chunk_meta.get('actions', ''),
-                'emotions': chunk_meta.get('emotions', ''),
-                # 技术字段
-                'duration_seconds': chunk_meta.get('duration_seconds', 0),
-                'chunk_index': chunk_meta.get('chunk_index', 0),
-                'chunk_count_estimate': chunk_meta.get('chunk_count_estimate', 0),
-                'language': chunk_meta.get('language', ''),
-                'confidence': chunk_meta.get('confidence', 0.75),
-            }
-
-            # 优先使用 chunk.text（完整内容），如果没有则使用 chunk_summary（摘要）
-            chunk_text = chunk.text.strip() if chunk.text else ''
-            chunk_summary = chunk_meta.get('chunk_summary', '').strip()
-            agent_reply = chunk_text or chunk_summary or '该视频片段未生成可用摘要'
-            
-            video_name = meta_data['video_name']
-            time_range = meta_data['time_range']
-            user_input = f"{video_name}, {time_range}发生了什么？"
-
-            timestamp = get_timestamp()
-            # 去重：如果 short-term 中已有相同 video_name 和 time_range 的记忆，则跳过添加
-            existing = False
-            try:
-                for m in memory_system.short_term_memory.get_all():
-                    m_md = m.get('meta_data', {}) or {}
-                    if (
-                        m_md.get('video_name') == meta_data.get('video_name')
-                        and m_md.get('time_range') == meta_data.get('time_range')
-                    ):
-                        existing = True
-                        break
-            except Exception:
-                existing = False
-
-            if not existing:
-                memory_system.add_memory(
-                    user_input=user_input,
-                    agent_response=agent_reply,
-                    timestamp=timestamp,
-                    meta_data=meta_data
-                )
-            else:
-                print(f"Skipping duplicate memory for {meta_data.get('video_name')} {meta_data.get('time_range')}")
-
-            conversations.append({
-                'user_input': user_input,
-                'agent_response': agent_reply,
-                'timestamp': timestamp,
-                'meta_data': meta_data
             })
-
-        return jsonify({
-            'success': True,
-            'ingested_rounds': len(conversations),
-            'conversations': conversations,
-            'videorag_metadata': video_result.metadata,
-            'progress': progress_events
-        })
+        except Exception as e:
+            return jsonify({
+                'error': f'调用 add_multimodal_memory 失败: {str(e)}',
+                'progress': progress_events
+            }), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:

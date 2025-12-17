@@ -3,9 +3,29 @@
 """
 
 import os
-from .storage_manager import FileStorageManager
-from .file_types import FileType
-from .api_server import create_api_server
+import sys
+from pathlib import Path
+
+# 支持直接运行和作为模块导入
+try:
+    from .storage_manager import FileStorageManager
+    from .file_types import FileType
+    from .api_server import create_api_server
+except ImportError:
+    # 直接运行时，添加父目录到路径
+    current_dir = Path(__file__).parent
+    parent_dir = current_dir.parent
+    if str(parent_dir) not in sys.path:
+        sys.path.insert(0, str(parent_dir))
+    from file_storage.storage_manager import FileStorageManager
+    from file_storage.file_types import FileType
+    from file_storage.api_server import create_api_server
+
+# 导入 video 转换器用于视频切分
+try:
+    from multimodal.converters.video_converter import VideoConverter
+except ImportError:
+    VideoConverter = None
 
 
 def example_basic_usage():
@@ -18,7 +38,7 @@ def example_basic_usage():
     manager = FileStorageManager(storage_path, user_id)
     
     # 上传文件（假设有一个测试视频文件）
-    test_video_path = "test_video.mp4"  # 替换为实际文件路径
+    test_video_path = "D:\\project\\memcontext-memcontext\\memcontext-playground\\file_storage\\test3.mp4"  # 替换为实际文件路径
     
     if os.path.exists(test_video_path):
         # 上传文件
@@ -32,23 +52,75 @@ def example_basic_usage():
         file_path = manager.get_file_path(file_record.file_id)
         print(f"文件路径: {file_path}")
         
-        # 获取视频片段（如果文件是视频）
-        if file_record.file_type == FileType.VIDEO:
-            handler = manager.get_handler(FileType.VIDEO)
-            
-            # 获取5-10秒的片段
-            segment_path = handler.get_segment_by_time(
-                file_record.file_id,
-                start_time=5.0,
-                end_time=10.0
-            )
-            print(f"视频片段路径: {segment_path}")
-            
-            # 列出所有片段
-            segments = handler.list_segments(file_record.file_id)
-            print(f"已生成片段数: {len(segments)}")
-            for seg in segments:
-                print(f"  片段: {seg.start_time:.2f}s - {seg.end_time:.2f}s")
+        # 使用 video 转换器按1分钟切分视频（如果文件是视频）
+        if file_record.file_type == FileType.VIDEO and VideoConverter:
+            print("\n使用 video 转换器按1分钟切分视频...")
+            try:
+                # 创建 video 转换器
+                converter = VideoConverter()
+                
+                # 使用 video 转换器切分视频（按1分钟一段）
+                video_path = file_path
+                segments = converter._split_video_by_time(video_path, segment_duration=60)
+                
+                print(f"视频已切分成 {len(segments)} 个片段（按1分钟一段）:")
+                
+                # 获取 VideoHandler 来保存片段
+                handler = manager.get_handler(FileType.VIDEO)
+                from file_storage.utils import format_time_for_filename
+                import shutil
+                
+                # 将切分后的片段复制到 file_storage 的 segments 目录
+                saved_count = 0
+                for i, (temp_segment_path, start_time, end_time) in enumerate(segments, 1):
+                    duration = end_time - start_time
+                    print(f"  片段 {i}: {start_time:.1f}s - {end_time:.1f}s (时长: {duration:.1f}秒)", end="")
+                    
+                    # 使用 VideoHandler 的方法来保存片段（会自动生成正确的文件名和路径）
+                    try:
+                        # 使用 get_segment_path 方法，它会自动处理路径和文件名
+                        location_info = {
+                            'start_time': start_time,
+                            'end_time': end_time
+                        }
+                        target_segment_path = handler.get_segment_path(file_record.file_id, location_info)
+                        
+                        # 如果目标文件不存在，从临时文件复制
+                        if not os.path.exists(target_segment_path):
+                            # 确保目录存在
+                            os.makedirs(os.path.dirname(target_segment_path), exist_ok=True)
+                            shutil.copy2(temp_segment_path, target_segment_path)
+                            saved_count += 1
+                            print(" ✅ 已保存")
+                        else:
+                            print(" (已存在，跳过)")
+                    except Exception as e:
+                        print(f" ⚠️  保存失败: {e}")
+                    
+                    if duration < 60:
+                        print(f"    ⚠️  最后一段不足1分钟，按实际时长 {duration:.1f}秒切分")
+                
+                print(f"\n✅ 视频切分完成，共 {len(segments)} 个片段，已保存 {saved_count} 个新片段到存储目录")
+                
+                # 列出所有已保存的片段
+                saved_segments = handler.list_segments(file_record.file_id)
+                if saved_segments:
+                    print(f"\n已保存的片段列表（共 {len(saved_segments)} 个）:")
+                    for seg in saved_segments:
+                        print(f"  - {seg.start_time:.1f}s - {seg.end_time:.1f}s (时长: {seg.duration:.1f}秒)")
+            except Exception as e:
+                print(f"⚠️  视频切分失败: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # 如果需要获取特定时间段的片段，可以使用以下代码：
+        # if file_record.file_type == FileType.VIDEO:
+        #     handler = manager.get_handler(FileType.VIDEO)
+        #     segment_path = handler.get_segment_by_time(
+        #         file_record.file_id,
+        #         start_time=5.0,
+        #         end_time=10.0
+        #     )
     else:
         print(f"测试文件不存在: {test_video_path}")
 

@@ -558,6 +558,38 @@ class Memcontext:
         """
         print(f"Memorycontext: Generating response for query: '{query[:50]}...'")
 
+        # 0. 检测用户是否在查询文件ID，如果是，直接返回文件路径
+        file_id = self._extract_file_id_from_query(query)
+        if file_id and self.file_storage_manager:
+            try:
+                # 先尝试直接查询（可能是 file_storage_id，32位十六进制）
+                file_path = self.file_storage_manager.get_file_path(file_id)
+                file_storage_id = file_id
+                
+                # 如果直接查询失败，可能是 source_file_id（64位十六进制），需要从记忆中查找对应的 file_storage_id
+                if not file_path:
+                    print(f"Memorycontext: File ID {file_id} not found in file_storage, searching in memories for file_storage_id...")
+                    file_storage_id = self._find_file_storage_id_from_memory(file_id)
+                    if file_storage_id:
+                        file_path = self.file_storage_manager.get_file_path(file_storage_id)
+                
+                if file_path:
+                    file_record = self.file_storage_manager.get_file_record(file_storage_id)
+                    if file_record:
+                        response = f"文件ID {file_id} 对应的文件路径是：\n{file_path}\n\n文件信息：\n- 文件类型：{file_record.file_type.value if hasattr(file_record.file_type, 'value') else file_record.file_type}\n- 原始文件名：{file_record.original_filename}\n- 上传时间：{file_record.upload_time}"
+                        if file_storage_id != file_id:
+                            response += f"\n- file_storage_id: {file_storage_id}"
+                        return response
+                    else:
+                        return f"文件ID {file_id} 对应的文件路径是：\n{file_path}"
+                else:
+                    return f"未找到文件ID {file_id} 对应的文件路径。可能是 source_file_id，但未在记忆中找到对应的 file_storage_id。"
+            except Exception as e:
+                print(f"Memorycontext: Error querying file path for file_id={file_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                # 继续正常流程，不中断
+
         # 1. Retrieve context
         retrieval_results = self.retriever.retrieve_context(
             user_query=query,
@@ -847,25 +879,49 @@ class Memcontext:
                 from file_storage import FileType
                 # 判断是否为视频文件
                 if file_extension in ['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'm4v']:
-                    # 上传到 FileStorageManager
-                    file_record = self.file_storage_manager.upload_file(
-                        file_path=str(file_path),
-                        file_type=FileType.VIDEO,
-                        metadata=base_metadata
-                    )
-                    stored_file_id = file_record.file_id
-                    stored_file_path = file_record.stored_path
-                    # 更新 base_metadata 中的路径信息
+                    # 检查文件路径是否已经在 file_storage 中
+                    file_path_str = str(file_path)
+                    file_path_obj = Path(file_path_str)
+                    
+                    # 尝试从路径中提取 file_id（路径格式：.../files/videos/{file_id}/original.mp4）
+                    extracted_file_id = None
+                    try:
+                        parts = file_path_obj.parts
+                        if 'videos' in parts:
+                            videos_index = parts.index('videos')
+                            if videos_index + 1 < len(parts):
+                                extracted_file_id = parts[videos_index + 1]
+                                # 验证这个 file_id 是否存在于 file_storage 中
+                                existing_record = self.file_storage_manager.get_file_record(extracted_file_id)
+                                if existing_record and os.path.exists(existing_record.stored_path):
+                                    stored_file_id = extracted_file_id
+                                    stored_file_path = existing_record.stored_path
+                                    print(f"FileStorageManager: File already in storage, using existing file_id={stored_file_id}")
+                    except Exception as e:
+                        print(f"FileStorageManager: Error checking existing file: {e}")
+                    
+                    # 如果文件不在 file_storage 中，则上传
+                    if not stored_file_id:
+                        file_record = self.file_storage_manager.upload_file(
+                            file_path=file_path_str,
+                            file_type=FileType.VIDEO,
+                            metadata=base_metadata
+                        )
+                        stored_file_id = file_record.file_id
+                        stored_file_path = file_record.stored_path
+                        print(f"FileStorageManager: Video uploaded with file_id={stored_file_id}")
+                    
+                    # 更新 base_metadata 中的文件ID信息（不存储路径）
                     base_metadata['file_storage_id'] = stored_file_id
-                    base_metadata['stored_file_path'] = stored_file_path
                     # 使用存储路径作为后续处理的路径
                     file_path = Path(stored_file_path)
                     # 将 file_storage_manager 和 file_storage_id 传递给 converter
                     converter_kwargs['file_storage_manager'] = self.file_storage_manager
                     converter_kwargs['file_storage_id'] = stored_file_id
-                    print(f"FileStorageManager: Video uploaded with file_id={stored_file_id}")
             except Exception as e:
                 print(f"FileStorageManager: Failed to upload file, using original path. Error: {e}")
+                import traceback
+                traceback.print_exc()
 
         # --- Temp cache: avoid重复解析同一文件 ---
         cache_dir = Path(self.data_storage_path) / "temp_memory"
@@ -931,59 +987,83 @@ class Memcontext:
 
         timestamps = []
         
+        # 检查是否应该使用简洁格式存储（不显示详细的chunk格式）
+        # 如果 agent_response 是简单的上传消息，使用简洁格式存储chunks
+        simple_upload_messages = ["用户上传了一个视频", "用户上传了一个测试视频", "已上传", "已存储视频文件"]
+        use_simple_format = (
+            agent_response and 
+            any(msg in agent_response for msg in simple_upload_messages)
+        )
+        
         # 准备所有记忆数据
         memories_to_add = []
+        
+        # 存储所有chunks，但根据 use_simple_format 决定格式
         for chunk in output.chunks:
-            # 安全地合并元数据，确保所有值都是字典
-            try:
-                base_meta = base_metadata if isinstance(base_metadata, dict) else {}
-                output_meta = output.metadata if isinstance(output.metadata, dict) else {}
-                chunk_meta_dict = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+                # 安全地合并元数据，确保所有值都是字典
+                try:
+                    base_meta = base_metadata if isinstance(base_metadata, dict) else {}
+                    output_meta = output.metadata if isinstance(output.metadata, dict) else {}
+                    chunk_meta_dict = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+                    
+                    chunk_meta = {
+                        **base_meta,
+                        **output_meta,
+                        **chunk_meta_dict,
+                        "source_type": "multimodal",
+                    }
+                except (TypeError, AttributeError) as e:
+                    print(f"Memorycontext: Error merging metadata: {e}")
+                    chunk_meta = {"source_type": "multimodal"}
                 
-                chunk_meta = {
-                    **base_meta,
-                    **output_meta,
-                    **chunk_meta_dict,
-                    "source_type": "multimodal",
-                }
-            except (TypeError, AttributeError) as e:
-                print(f"Memorycontext: Error merging metadata: {e}")
-                chunk_meta = {"source_type": "multimodal"}
-            
-            # 对于视频内容，使用完整的文本描述（chunk.text）作为 agent_response
-            # 这样检索时能获得详细的视频内容，而不是只有摘要
-            if chunk_meta.get("video_path") or chunk_meta.get("video_name"):
-                chunk_agent_response = chunk.text  # 使用完整的视频描述文本
-            else:
-                chunk_agent_response = agent_response or chunk_meta.get(
-                    "chunk_summary",
-                    f"[Multimodal] Stored content from {chunk_meta.get('original_filename', 'file')}",
-                )
-            
-            # 对于视频内容，构建格式化的 user_input
-            # 使用 file_storage_id 而不是 video_path
-            try:
-                # 优先使用 file_storage_id
-                video_id = chunk_meta.get("file_storage_id") or chunk_meta.get("source_file_id") or stored_file_id
-                time_range = chunk_meta.get("time_range", "")
+                # 构建 user_input 和 agent_response
+                # 前端展示：片段内容和音频信息
+                # metadata 中存储：其他所有信息（包括视频ID）
                 
-                # 如果是视频内容且有 time_range，使用新格式：描述{视频id}的{time_range}
-                if video_id and time_range:
-                    user_input = f"描述{video_id}的{time_range}"
+                # 1. 构建 user_input（简洁格式，用于前端展示，不显示视频ID）
+                try:
+                    time_range = chunk_meta.get("time_range", "")
+                    
+                    if time_range:
+                        # 简洁格式：只显示时间范围，不显示视频ID
+                        user_input = f"视频片段 {time_range}"
+                    else:
+                        user_input = "用户上传了一个视频"
+                except Exception as e:
+                    print(f"Memorycontext: Error building user_input: {e}")
+                    user_input = "用户上传了一个视频"
+                
+                # 2. 构建 agent_response（包含片段内容和音频信息，用于前端展示）
+                response_parts = []
+                
+                # 添加视频片段内容
+                if chunk.text:
+                    response_parts.append(f"【视频内容】\n{chunk.text}")
+                
+                # 添加音频信息
+                audio_transcription = chunk_meta.get("audio_transcription")
+                has_audio = chunk_meta.get("has_audio", False)
+                
+                if audio_transcription:
+                    response_parts.append(f"【音频转录】\n{audio_transcription}")
+                elif has_audio:
+                    response_parts.append("【音频】\n本片段包含音频，但未进行转录")
                 else:
-                    # 非视频内容或没有 time_range，使用原来的格式
-                    user_input = chunk.text
-            except Exception as e:
-                print(f"Memorycontext: Error building user_input: {e}, using chunk.text as fallback")
-                user_input = chunk.text
-            
-            memories_to_add.append({
-                "user_input": user_input,
-                "agent_response": chunk_agent_response,
-                "timestamp": get_timestamp(),
-                "meta_data": chunk_meta,
-            })
-            timestamps.append(get_timestamp())
+                    response_parts.append("【音频】\n本片段无音频")
+                
+                # 组合 agent_response
+                if response_parts:
+                    chunk_agent_response = "\n\n".join(response_parts)
+                else:
+                    chunk_agent_response = agent_response or "已上传"
+                
+                memories_to_add.append({
+                    "user_input": user_input,
+                    "agent_response": chunk_agent_response,
+                    "timestamp": get_timestamp(),
+                    "meta_data": chunk_meta,
+                })
+                timestamps.append(get_timestamp())
         
         # 使用正常流程：逐个添加到 short_term，超出容量后自动转到 mid_term
         # 这样更简单，也更符合原来的设计逻辑
@@ -1025,11 +1105,91 @@ class Memcontext:
             "file_extension": file_extension,
             "mime_type": mime_type,
             "file_size": file_size,
-            "original_filename": file_path.name if file_path else None,
             "hash_algorithm": algorithm,
             "hash_value": digest,
             "ingest_source_type": source_type,
         }
+
+    def _extract_file_id_from_query(self, query: str) -> Optional[str]:
+        """
+        从用户查询中提取文件ID（32位或64位十六进制字符串）
+        
+        Args:
+            query: 用户查询字符串
+            
+        Returns:
+            提取到的文件ID，如果没有找到则返回None
+        """
+        import re
+        # 文件ID通常是32位或64位十六进制字符串
+        # 匹配32位或更长的十六进制字符串（不要求单词边界，因为后面可能跟着中文字符）
+        # 先尝试匹配完整的64位ID（64个十六进制字符）
+        pattern_64 = r'([0-9a-f]{64})(?:\s|这个|的|文件|视频|路径|是什么|？|\?|$)'
+        match_64 = re.search(pattern_64, query, re.IGNORECASE)
+        if match_64:
+            return match_64.group(1)
+        
+        # 匹配32位或更长的十六进制字符串（至少32位）
+        pattern = r'([0-9a-f]{32,64})(?:\s|这个|的|文件|视频|路径|是什么|？|\?|$)'
+        matches = re.findall(pattern, query, re.IGNORECASE)
+        
+        if matches:
+            # 返回第一个匹配的文件ID
+            return matches[0]
+        
+        # 也尝试匹配常见的文件ID格式（可能包含在引号中或特定上下文中）
+        # 例如："文件ID是 xxx" 或 "xxx 这个文件"
+        patterns = [
+            r'文件[编号IDid][：:是]?\s*([0-9a-f]{32,64})',
+            r'([0-9a-f]{32,64})\s*这个文件',
+            r'([0-9a-f]{32,64})\s*的文件路径',
+            r'([0-9a-f]{32,64})\s*这个视频',
+            r'([0-9a-f]{32,64})\s*的视频',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        
+        return None
+    
+    def _find_file_storage_id_from_memory(self, source_file_id: str) -> Optional[str]:
+        """
+        从记忆中查找 source_file_id 对应的 file_storage_id
+        
+        Args:
+            source_file_id: source_file_id（64位十六进制字符串）
+            
+        Returns:
+            对应的 file_storage_id（32位十六进制字符串），如果没有找到则返回None
+        """
+        # 1. 从短期记忆中查找
+        short_term_memories = self.short_term_memory.get_all()
+        for memory in short_term_memories:
+            meta_data = memory.get('meta_data', {})
+            if isinstance(meta_data, dict):
+                if meta_data.get('source_file_id') == source_file_id:
+                    file_storage_id = meta_data.get('file_storage_id')
+                    if file_storage_id:
+                        print(f"Memorycontext: Found file_storage_id {file_storage_id} for source_file_id {source_file_id} in short_term memory")
+                        return file_storage_id
+        
+        # 2. 从中期记忆中查找
+        if hasattr(self.mid_term_memory, 'sessions'):
+            for session in self.mid_term_memory.sessions.values():
+                pages = session.get('details', [])
+                for page in pages:
+                    meta_data = page.get('meta_data', {})
+                    if isinstance(meta_data, dict):
+                        if meta_data.get('source_file_id') == source_file_id:
+                            file_storage_id = meta_data.get('file_storage_id')
+                            if file_storage_id:
+                                print(f"Memorycontext: Found file_storage_id {file_storage_id} for source_file_id {source_file_id} in mid_term memory")
+                                return file_storage_id
+        
+        print(f"Memorycontext: Could not find file_storage_id for source_file_id {source_file_id} in memories")
+        return None
 
     # --- Helper/Maintenance methods (optional additions) ---
     def get_user_profile_summary(self) -> str:
