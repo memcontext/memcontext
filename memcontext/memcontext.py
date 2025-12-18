@@ -624,19 +624,74 @@ class Memcontext:
                 # 继续正常流程，不中断
 
         # 1. Retrieve context
-        retrieval_results = self.retriever.retrieve_context(
-            user_query=query,
-            user_id=self.user_id
-        )
-        retrieved_pages = retrieval_results["retrieved_pages"]
-        retrieved_user_knowledge = retrieval_results["retrieved_user_knowledge"]
-        retrieved_assistant_knowledge = retrieval_results["retrieved_assistant_knowledge"]
+        # 检测用户是否在询问视频相关内容
+        is_video_query = any(keyword in query for keyword in [
+            '视频', '这个视频', '该视频', '影片', 'movie', 'video'
+        ])
+        
+        # 如果用户询问视频相关内容，找出所有视频片段
+        # 优先使用file_storage_id，如果没有则使用source_file_id
+        all_video_pages = []
+        if is_video_query:
+            print(f"Memorycontext: Video query detected, collecting all video pages from mid_term memory")
+            # 统计所有视频ID及其片段数
+            video_ids = set()
+            for session_id, session_data in self.mid_term_memory.sessions.items():
+                for page in session_data.get("details", []):
+                    page_meta = page.get('meta_data', {}) or {}
+                    page_video_id = page_meta.get('file_storage_id') or page_meta.get('source_file_id')
+                    if page_video_id:
+                        video_ids.add(page_video_id)
+                        all_video_pages.append(page)
+            
+            print(f"Memorycontext: Found {len(all_video_pages)} video pages from {len(video_ids)} video(s): {list(video_ids)[:3]}...")
+            
+            if all_video_pages:
+                # 按时间范围排序
+                def get_time_range(page):
+                    meta = page.get('meta_data', {}) or {}
+                    time_range = meta.get('time_range', '')
+                    if isinstance(time_range, str) and '-' in time_range:
+                        try:
+                            # 处理格式如 "240.00s-274.50s" 或 "240.00-274.50"
+                            start_str = time_range.split('-')[0].replace('s', '').strip()
+                            start_time = float(start_str)
+                            return start_time
+                        except:
+                            return 0
+                    # 如果没有time_range，尝试从chunk_index排序
+                    return meta.get('chunk_index', 0)
+                
+                all_video_pages.sort(key=get_time_range)
+                print(f"Memorycontext: Using all {len(all_video_pages)} video pages for video query")
+        
+        # 如果找到了视频片段，使用它们；否则使用正常的检索逻辑
+        if all_video_pages:
+            retrieval_results = self.retriever.retrieve_context(
+                user_query=query,
+                user_id=self.user_id
+            )
+            retrieved_pages = all_video_pages  # 使用所有视频片段
+            retrieved_user_knowledge = retrieval_results["retrieved_user_knowledge"]
+            retrieved_assistant_knowledge = retrieval_results["retrieved_assistant_knowledge"]
+        else:
+            retrieval_results = self.retriever.retrieve_context(
+                user_query=query,
+                user_id=self.user_id
+            )
+            retrieved_pages = retrieval_results["retrieved_pages"]
+            retrieved_user_knowledge = retrieval_results["retrieved_user_knowledge"]
+            retrieved_assistant_knowledge = retrieval_results["retrieved_assistant_knowledge"]
         
         # 1.1 识别需要的 metadata 字段并重新排序检索结果
-        needed_metadata_fields = self._needs_metadata(query)
-        retrieved_pages = self._filter_and_rank_by_metadata(retrieved_pages, needed_metadata_fields)
-        if needed_metadata_fields:
-            print(f"Memorycontext: Query needs metadata fields: {needed_metadata_fields}, re-ranked {len(retrieved_pages)} pages")
+        # 如果已经收集了所有视频片段（all_video_pages），跳过过滤，保持所有片段
+        if not is_video_query or not all_video_pages:
+            needed_metadata_fields = self._needs_metadata(query)
+            retrieved_pages = self._filter_and_rank_by_metadata(retrieved_pages, needed_metadata_fields)
+            if needed_metadata_fields:
+                print(f"Memorycontext: Query needs metadata fields: {needed_metadata_fields}, re-ranked {len(retrieved_pages)} pages")
+        else:
+            print(f"Memorycontext: Using all {len(retrieved_pages)} video pages, skipping metadata filtering")
 
         # 2. Get short-term history
         short_term_history = self.short_term_memory.get_all()
@@ -737,8 +792,9 @@ class Memcontext:
                 # 如果有 video_id，也尝试获取 video_path 用于显示
                 page_video_path = page_meta.get('video_path') or page_meta.get('video_name')
             
-            # 如果查询中指定了视频，只返回匹配的视频内容
-            if query_video_path:
+            # 如果查询中明确指定了视频ID/路径，只返回匹配的视频内容
+            # 但如果已经收集了所有视频片段（is_video_query且all_video_pages），跳过这个过滤
+            if query_video_path and not (is_video_query and all_video_pages):
                 # 检查是否匹配（支持 video_id 或 video_path 匹配）
                 matched = False
                 if page_video_id:
