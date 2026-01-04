@@ -1,0 +1,25 @@
+# Memcontext-n8n Dependencies
+# Web framework
+flask>=2.0.0,<3.0.0
+werkzeug>=2.0.0
+
+# Environment variables
+python-dotenv>=0.19.0,<2.0.0
+
+# Memcontext core dependencies
+# Core scientific computing and ML libraries
+numpy==1.24.*
+sentence-transformers>=2.7.0,<3.0.0
+transformers>=4.51.0
+FlagEmbedding>=1.2.9
+
+# Vector database
+faiss-cpu
+
+# LLM API
+openai
+
+# Additional dependencies for compatibility
+typing-extensions>=4.0.0,<5.0.0
+regex>=2022.1.18
+

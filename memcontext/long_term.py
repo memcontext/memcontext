@@ -142,6 +142,8 @@ class LongTermMemory:
             "assistant_knowledge": list(self.assistant_knowledge)
         }
         try:
+            # 确保目录存在（防止目录被删除或路径变更的情况）
+            ensure_directory_exists(self.file_path)
             with open(self.file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except IOError as e:

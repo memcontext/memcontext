@@ -160,6 +160,15 @@ python app.py    # Default port 5000
 
 ContextBase is under active development. If you are interested in Multi-modal RAG, Agent Memory Systems, or Vector Search, please Star this repo and follow our progress.
 
+### 🔌 Platform Integrations
+
+**n8n Integration**: For detailed instructions on integrating ContextBase with n8n workflow automation platform, including step-by-step deployment guide, API configuration, and workflow examples, please refer to the [n8n Integration Guide](memcontext-n8n/README.md).
+
+The n8n integration provides a complete memory management API service that enables your n8n workflows to:
+- Store and retrieve conversation memories
+- Process multimodal content (video, audio, images)
+- Build intelligent agents with persistent memory capabilities
+
 ## 📜 License
 
 Apache 2.0
