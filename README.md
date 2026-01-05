@@ -169,6 +169,14 @@ The n8n integration provides a complete memory management API service that enabl
 - Process multimodal content (video, audio, images)
 - Build intelligent agents with persistent memory capabilities
 
+**Coze Integration**: For detailed instructions on integrating ContextBase with Coze (扣子) platform as a local plugin, including plugin setup, video understanding capabilities, and usage examples, please refer to the [Coze Integration Guide](memcontext-coze/README.md) and [Coze Usage Guide](memcontext-coze/COZE_USAGE_GUIDE.md).
+
+The Coze integration provides a local plugin (端插件) that enables your Coze bots to:
+- Analyze local video files with AI-powered understanding
+- Extract video descriptions, tags, and timeline information
+- Support audio transcription and OCR text recognition
+- Process videos locally while maintaining privacy
+
 ## 📜 License
 
 Apache 2.0
