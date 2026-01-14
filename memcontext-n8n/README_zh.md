@@ -8,13 +8,13 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![n8n](https://img.shields.io/badge/n8n-Compatible-green.svg)](https://n8n.io/)
 
-*让您的 n8n 工作流拥有持久化记忆能力，支持文本、视频、音频、图像等多种模态* 
+*让您的 n8n 工作流拥有持久化记忆能力，支持文本、视频、音频、图像等多种模态*
 
 ---
 
 ## 📖 简介
 
-MemContext n8n Integration 是基于 [MemContext](README.md) 多模态 Agent 记忆框架开发的 n8n 插件服务。它通过 RESTful API 为 n8n 工作流提供强大的记忆管理能力，使您的自动化工作流能够：
+MemContext n8n 插件是基于 [MemContext](README.md) 多模态 Agent 记忆框架开发的 n8n 插件服务。它通过 RESTful API 为 n8n 工作流提供强大的记忆管理能力，使您的自动化工作流能够：
 
 - 🧠 **持久化记忆**：保存和检索对话历史，构建长期用户画像
 - 🎬 **多模态处理**：支持视频、音频、图像、文档等多种格式的内容理解
@@ -33,21 +33,16 @@ MemContext n8n Integration 是基于 [MemContext](README.md) 多模态 Agent 记
 
 ## 📋 前置要求
 
-### 必需软件
+### 环境依赖
 
-- **Python 3.10+** - [下载地址](https://www.python.org/downloads/)
-- **FFmpeg** - 用于视频/音频处理
-  - Windows: `winget install FFmpeg`
-  - macOS: `brew install ffmpeg`
-  - Linux: `sudo apt install ffmpeg`
-- **Docker Desktop** (可选) - 用于运行 n8n
-  - Windows: `winget install Docker.DockerDesktop`
-  - [其他平台](https://www.docker.com/products/docker-desktop/)
+在开始之前，请确保您的环境满足以下要求：
 
-### 必需账号和密钥
-
-- **LLM API Key** - OpenAI 或兼容 OpenAI API 的服务（如火山引擎）
-- **n8n 平台** - 本地安装或云端实例
+| 组件 | 要求 | 说明 |
+| :--- | :--- | :--- |
+| **Python** | 3.10+ | 运行插件后端服务 |
+| **FFmpeg** | 最新版 | 用于处理音视频流 |
+| **Docker** | 最新版 | 用于快速部署 n8n 实例 |
+| **n8n** | v1.0+ | 自动化工作流平台 |
 
 ---
 
@@ -62,7 +57,7 @@ conda create -n memcontext-n8n python=3.10 -y
 conda activate memcontext-n8n
 ```
 
-#### 1.2 安装依赖
+#### 1.2 依赖安装
 
 ```bash
 # 在MemContext项目根目录执行
@@ -104,9 +99,9 @@ docker-run-n8n.bat
 
 ### 步骤 3: 配置环境变量
 
-在**项目根目录**创建 `.env` 文件，示例如下：
+在**memcontext-n8n目录**创建 `.env` 文件，示例如下：
 
-```env
+```
 # ============================================
 # LLM API 配置（必需）
 # ============================================
@@ -156,23 +151,19 @@ curl http://localhost:5019
 
 ### 步骤 5: 创建工作流示例
 
-#### 5.1 视频记忆工作流（自动化脚本）
+#### 5.1 创建视频记忆工作流Demo
+
+1. 运行下列命令，脚本会自动创建一个视频上传和检索工作流Demo，并配置好所有节点
 
 ```bash
 cd memcontext-n8n
-
-# 准备测试视频（约1分钟）
-# 将视频命名为 test1.mp4 放在 memcontext-n8n 目录下
 
 # 运行工作流创建脚本
 create_video_workflow.bat
 ```
 
-脚本会自动：
 
-- ✅ 创建视频上传和检索工作流
-- ✅ 配置所有节点
-- ✅ 激活工作流
+2. 准备一个1分钟左右的视频（若视频太长等待处理时间可能会较久）放入memcontext-n8n/memcontext-n8n下
 
 #### 5.2 在 n8n 中执行工作流
 
@@ -189,3 +180,8 @@ create_video_workflow.bat
 - `video_upload.success`: `true`
 - `memory_search.success`: `true`
 - `summary.answer`: 包含视频内容描述
+
+---
+
+## 📜 许可证
+本项目采用 Apache-2.0 License 授权。
