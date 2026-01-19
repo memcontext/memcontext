@@ -2,6 +2,11 @@
 
 <div align="center">
 
+![License](https://img.shields.io/badge/license-Apache%202.0-blue)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Status](https://img.shields.io/badge/Status-In%20Development-orange)
+![Multi-modal](https://img.shields.io/badge/Modality-Audio%20|%20Video%20|%20Image%20|%20Document%20|%20Text-green)
+
 **The First Full-Modal Cross-Platform Memory Framework for AI Agents**
 
 *Store Everything · Search Everything · Frame-Level Positioning · Multi-Platform Support*
