@@ -18,53 +18,56 @@ except ImportError:
     Ark = None
 from ..converter import ConversionChunk, ConversionOutput, MultimodalConverter
 from ..factory import ConverterFactory
-def load_env_file(env_path: Optional[Path] = None) -> None:
+import os
+import json
+from pathlib import Path
+from typing import Optional
+
+def load_config_to_env(config_path: Optional[Path] = None) -> None:
     """
-    加载 .env 文件到环境变量
-    如果 env_path 为 None，会在当前文件目录和父目录中查找 .env 文件
+    加载 config.json 文件中的键值对到环境变量 os.environ
+    如果 config_path 为 None，会在当前文件目录和父目录中查找 config.json 文件
     """
-    if env_path is None:
-        current_file_dir = Path(__file__).parent
-        env_path = current_file_dir / ".env"
-        if not env_path.exists():
-            parent_dir = current_file_dir.parent.parent
-            env_path = parent_dir / ".env"
-    
-    if env_path and env_path.exists():
+    # 1. 确定文件路径
+    if config_path is None:
+        # 获取当前执行终端的路径
+        current_execution_dir = Path.cwd()
+        
+        # 优先查找当前执行目录
+        config_path = current_execution_dir / "config.json"
+
+    # 2. 加载并注入环境变量
+    if config_path and config_path.exists():
         try:
-            with open(env_path, 'r', encoding='utf-8') as f:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = json.load(f)
+                
                 loaded_count = 0
-                for line in f:
-                    line = line.strip()
-                    # 跳过空行和注释
-                    if not line or line.startswith('#'):
-                        continue
-                    # 解析 KEY=VALUE 格式
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        key = key.strip()
-                        value = value.strip()
-                        # 移除引号
-                        if value.startswith('"') and value.endswith('"'):
-                            value = value[1:-1]
-                        elif value.startswith("'") and value.endswith("'"):
-                            value = value[1:-1]
-                        # 设置环境变量（如果不存在则设置，避免覆盖已存在的环境变量）
-                        if key and key not in os.environ:
-                            os.environ[key] = value
-                            loaded_count += 1
+                for key, value in config_data.items():
+                    if isinstance(value, (dict, list)):
+                        value = json.dumps(value)
+                    str_key = str(key)
+                    str_value = str(value)
+
+                    # 只有当环境变量中不存在该 key 时才设置，避免覆盖系统预设值
+                    if str_key and str_key not in os.environ:
+                        os.environ[str_key] = str_value
+                        loaded_count += 1
+                        
                 if loaded_count > 0:
-                    print(f"[INFO] 从 {env_path} 加载了 {loaded_count} 个环境变量")
+                    print(f"[INFO] 从 {config_path} 加载了 {loaded_count} 个配置项到环境变量")
+                    
+        except json.JSONDecodeError:
+            print(f"[ERROR] {config_path} 不是有效的 JSON 格式")
         except Exception as e:
-            print(f"[WARNING] 读取 .env 文件失败: {e}")
+            print(f"[WARNING] 读取 config.json 文件失败: {e}")
     else:
-        # 调试信息：显示查找的路径
-        if env_path:
-            print(f"[DEBUG] 未找到 .env 文件，查找路径: {env_path}")
+        # 调试信息
+        if config_path:
+            print(f"[DEBUG] 未找到 config.json 文件，最后尝试路径: {config_path}")
 
-
-# 在模块加载时尝试加载 .env 文件
-load_env_file()
+# 在模块加载时尝试加载
+load_config_to_env()
 
 
 class VideoConverter(MultimodalConverter):
