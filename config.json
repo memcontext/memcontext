@@ -1,0 +1,24 @@
+{
+  "user_id": "test_user_001",
+  "llm_model": "doubao-seed-1-6-flash-250828",
+  "embedding_model_name": "doubao-embedding-large-text-250515",
+  "openai_api_key": "fed0bdea-c0d3-4880-b4ce-ded3e1d9d3b0",
+  "openai_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "embedding_api_key": "fed0bdea-c0d3-4880-b4ce-ded3e1d9d3b0",
+  "embedding_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "data_storage_path": "./memdemo/data",
+  "assistant_id": "memcontext_assistant",
+  "short_term_capacity": 7,
+  "mid_term_capacity": 2000,
+  "long_term_knowledge_capacity": 100,
+  "retrieval_queue_capacity": 4,
+  "mid_term_heat_threshold": 7.0,
+  "mid_term_similarity_threshold": 0.6,
+  "openai_api_urls_keys":{
+    "https://ark.cn-beijing.volces.com/api/v3": [
+      "fed0bdea-c0d3-4880-b4ce-ded3e1d9d3b0",
+      "75a47ef6-d806-4820-aa8f-279daab3ef5b",
+      "5823b4f9-8756-4858-afa4-a19253b494ae"
+    ]
+  }
+} 
