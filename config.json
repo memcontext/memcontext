@@ -1,0 +1,24 @@
+{
+  "user_id": "test_user_001",
+  "llm_model": "doubao-seed-1-6-flash-250828",
+  "embedding_model_name": "doubao-embedding-large-text-250515",
+  "openai_api_key": "",
+  "openai_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "embedding_api_key": "",
+  "embedding_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "data_storage_path": "./memdemo/data",
+  "assistant_id": "memcontext_assistant",
+  "short_term_capacity": 7,
+  "mid_term_capacity": 2000,
+  "long_term_knowledge_capacity": 100,
+  "retrieval_queue_capacity": 4,
+  "mid_term_heat_threshold": 7.0,
+  "mid_term_similarity_threshold": 0.6,
+  "openai_api_urls_keys":{
+    "https://ark.cn-beijing.volces.com/api/v3": [
+      "",
+      "",
+      ""
+    ]
+  }
+} 

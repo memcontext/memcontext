@@ -8,6 +8,12 @@ FlagEmbedding>=1.2.9                # For BGE-M3 model support
 faiss-cpu
 
 openai
+# Supabase (optional, for DB storage)
+supabase>=2.6.0
+postgrest>=0.16.0
+gotrue>=2.5.0
+realtime>=2.0.0
+storage3>=0.7.0
 # Web framework (for demo)
 flask>=2.0.0,<3.0.0
 fastapi>=0.110.0,<1.0.0
