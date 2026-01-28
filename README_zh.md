@@ -178,14 +178,26 @@ SILICONFLOW_MODEL=TeleAI/TeleSpeechASR
 ENABLE_AUDIO_TRANSCRIPTION=true
 ```
 
-4) 运行具备记忆功能的AI对话Demo
+4) 运行具备记忆功能的AI对话 Demo
 
+4.1）可使用flask版本
 ```bash
 cd memdemo
-python app.py    # 默认端口 5019
+python app.py        # Flask 版本 Demo，默认端口 5019
 ```
 
-在浏览器中打开 http://localhost:5019/ 可以看到登录界面，输入用户名即可与AI对话，体验记忆功能
+
+4.2）使用fastAPI版本
+如果你使用的是 **FastAPI 版本 Demo**（`app_fastAPI.py`），请先确保本机已经启动 Redis 服务（用于限流与会话存储）。示例（使用 Docker 启动 Redis）：
+
+```bash
+docker run -d --name memcontext-redis -p 6379:6379 redis:7-alpine
+
+cd memdemo
+python app_fastAPI.py   # FastAPI 版本 Demo，默认端口 5019
+```
+
+在浏览器中打开 http://localhost:5019/ 可以看到登录界面，输入用户名即可与 AI 对话，体验记忆功能。
 ![memdemo_login](assets/memdemo_login.png)
 
 ## 🤝 贡献指南

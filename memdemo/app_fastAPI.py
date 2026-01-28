@@ -24,6 +24,20 @@ from slowapi.middleware import SlowAPIMiddleware
 # load_dotenv 会自动从当前目录和父目录向上查找 .env 文件
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
+# 加载配置文件（用于负载均衡配置）
+config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+if not os.path.exists(config_path):
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+
+GLOBAL_CONFIG = {}
+if os.path.exists(config_path):
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            GLOBAL_CONFIG = json.load(f)
+            print(f"Loaded configuration from {config_path}")
+    except Exception as e:
+        print(f"Error loading config.json: {e}")
+
 # 导入限流配置
 from rate_limit_config import config as rate_limit_config
 
@@ -130,19 +144,26 @@ async def init_memory(data: InitMemoryRequest, request: Request):
     使用 async def 是为了保持 FastAPI 的一致性，如果将来需要异步操作可以方便扩展
     """
     user_id = data.user_id.strip() if data.user_id else ''
-    # 豆包配置从环境变量读取
-    api_key = os.environ.get('LLM_API_KEY', '').strip()
-    base_url = os.environ.get('LLM_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3').strip()
-    model = os.environ.get('LLM_MODEL', 'doubao-seed-1-6-flash-250828').strip()
-    embedding_model = os.environ.get('EMBEDDING_MODEL', 'doubao-embedding-large-text-250515').strip()
+    
+    # 优先从配置文件读取，如果没有则从环境变量读取
+    api_key = GLOBAL_CONFIG.get('openai_api_key', os.environ.get('LLM_API_KEY', '').strip())
+    base_url = GLOBAL_CONFIG.get('openai_base_url', os.environ.get('LLM_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3').strip())
+    model = GLOBAL_CONFIG.get('llm_model', os.environ.get('LLM_MODEL', 'doubao-seed-1-6-flash-250828').strip())
+    embedding_model = GLOBAL_CONFIG.get('embedding_model_name', os.environ.get('EMBEDDING_MODEL', 'doubao-embedding-large-text-250515').strip())
+    embedding_api_key = GLOBAL_CONFIG.get('embedding_api_key', os.environ.get('EMBEDDING_API_KEY', api_key).strip())
+    embedding_base_url = GLOBAL_CONFIG.get('embedding_base_url', os.environ.get('EMBEDDING_BASE_URL', base_url).strip())
+    
+    # 读取负载均衡配置（多个 API key）
+    api_urls_keys = GLOBAL_CONFIG.get('openai_api_urls_keys', {})
 
     if not user_id:
         raise HTTPException(status_code=400, detail='User ID 是必需的。')
     
-    if not api_key:
-        raise HTTPException(status_code=400, detail='LLM_API_KEY 环境变量未配置，请设置豆包 API Key。')
+    # 如果没有配置负载均衡，则检查单个 API key
+    if not api_urls_keys and not api_key:
+        raise HTTPException(status_code=400, detail='LLM_API_KEY 环境变量或配置文件未配置，请设置豆包 API Key。')
     
-    assistant_id = f"assistant_{user_id}"
+    assistant_id = GLOBAL_CONFIG.get('assistant_id') or f"assistant_{user_id}"
     
     try:
         # Initialize memcontext for this session
@@ -163,27 +184,34 @@ async def init_memory(data: InitMemoryRequest, request: Request):
             openai_api_key=api_key,
             openai_base_url=base_url,
             data_storage_path=data_path,
-            assistant_id=assistant_id,  # 使用 user_id 作为 assistant_id
-            short_term_capacity=7,  # Smaller for demo
-            mid_term_capacity=200,   # Smaller for demo
-            long_term_knowledge_capacity=1000,  # Smaller for demo
-            mid_term_heat_threshold=10.0,
+            assistant_id=assistant_id,
+            short_term_capacity=GLOBAL_CONFIG.get('short_term_capacity', 7),
+            mid_term_capacity=GLOBAL_CONFIG.get('mid_term_capacity', 200),
+            long_term_knowledge_capacity=GLOBAL_CONFIG.get('long_term_knowledge_capacity', 1000),
+            mid_term_heat_threshold=GLOBAL_CONFIG.get('mid_term_heat_threshold', 10.0),
             embedding_model_name=embedding_model,
-            embedding_model_kwargs={},
+            embedding_model_kwargs={'api_key': embedding_api_key, 'base_url': embedding_base_url},
             llm_model=model,
-            file_storage_base_path=file_storage_base_path
+            file_storage_base_path=file_storage_base_path,
+            openai_api_urls_keys=api_urls_keys if api_urls_keys else None  # 传入负载均衡配置
         )
         
         session_id = secrets.token_hex(8)
         memory_systems[session_id] = memory_system
         # FastAPI 的 session 通过 request.session 访问
         request.session['memory_session_id'] = session_id
-        # 将配置存入session
+        # 将配置存入session（包括负载均衡配置）
         memory_config = {
             'api_key': api_key,
             'base_url': base_url,
             'model': model,
-            'embedding_provider': 'doubao'
+            'embedding_provider': 'doubao',
+            'api_urls_keys': api_urls_keys,  # 保存负载均衡配置
+            'embedding_api_key': embedding_api_key,
+            'embedding_base_url': embedding_base_url,
+            'embedding_model': embedding_model,
+            'assistant_id': assistant_id,
+            'data_path': data_path
         }
         request.session['memory_config'] = memory_config
         
@@ -875,25 +903,33 @@ async def clear_memory(request: Request):
         if not config:
             raise HTTPException(status_code=400, detail='Configuration not found in session. Please re-initialize.')
 
-        api_key = config['api_key']
-        base_url = config['base_url']
-        model = config['model']
-        user_id = memory_system.user_id
-        assistant_id = memory_system.assistant_id
-        data_path = memory_system.data_storage_path
+        api_key = config.get('api_key', '')
+        base_url = config.get('base_url', 'https://ark.cn-beijing.volces.com/api/v3')
+        model = config.get('model', 'doubao-seed-1-6-flash-250828')
+        api_urls_keys = config.get('api_urls_keys', {})  # 获取负载均衡配置
+        embedding_api_key = config.get('embedding_api_key', api_key)
+        embedding_base_url = config.get('embedding_base_url', base_url)
+        embedding_model = config.get('embedding_model', 'doubao-embedding-large-text-250515')
+        assistant_id = config.get('assistant_id', memory_system.assistant_id)
+        data_path = config.get('data_path', memory_system.data_storage_path)
         
-        # Create new memory system
+        user_id = memory_system.user_id
+        
+        # Create new memory system（支持负载均衡）
         new_memory_system = Memcontext(
             user_id=user_id,
             openai_api_key=api_key,
             openai_base_url=base_url,
             data_storage_path=data_path,
             assistant_id=assistant_id,
-            short_term_capacity=7,
-            mid_term_capacity=200,
-            long_term_knowledge_capacity=100,
-            mid_term_heat_threshold=5.0,
-            llm_model=model
+            short_term_capacity=GLOBAL_CONFIG.get('short_term_capacity', 7),
+            mid_term_capacity=GLOBAL_CONFIG.get('mid_term_capacity', 200),
+            long_term_knowledge_capacity=GLOBAL_CONFIG.get('long_term_knowledge_capacity', 100),
+            mid_term_heat_threshold=GLOBAL_CONFIG.get('mid_term_heat_threshold', 5.0),
+            llm_model=model,
+            embedding_model_name=embedding_model,
+            embedding_model_kwargs={'api_key': embedding_api_key, 'base_url': embedding_base_url},
+            openai_api_urls_keys=api_urls_keys if api_urls_keys else None  # 传入负载均衡配置
         )
         
         # Replace the old memory system

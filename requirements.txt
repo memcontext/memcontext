@@ -10,6 +10,20 @@ faiss-cpu
 openai
 # Web framework (for demo)
 flask>=2.0.0,<3.0.0
+fastapi>=0.110.0,<1.0.0
+uvicorn[standard]>=0.27.0,<1.0.0
+
+# Rate limiting & Redis backend
+slowapi>=0.1.9
+redis>=5.0.0
+
+# Templates & utilities
+Jinja2>=3.1.0,<4.0.0
+python-dotenv>=0.19.0,<2.0.0
+Werkzeug>=3.0.0
+
+
+
 
 # Optional utilities
 python-dotenv>=0.19.0,<2.0.0

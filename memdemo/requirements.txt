@@ -4,3 +4,15 @@ numpy
 faiss-gpu
 python-dotenv
 sentence-transformers
+
+fastapi>=0.110.0,<1.0.0
+uvicorn[standard]>=0.27.0,<1.0.0
+
+# Rate limiting & Redis backend
+slowapi>=0.1.9
+redis>=5.0.0
+
+# Templates & utilities
+Jinja2>=3.1.0,<4.0.0
+python-dotenv>=0.19.0,<2.0.0
+Werkzeug>=3.0.0
