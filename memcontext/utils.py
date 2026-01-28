@@ -12,6 +12,7 @@ from . import prompts
 from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+from collections import defaultdict
 
 def clean_reasoning_model_output(text):
     """
@@ -31,7 +32,90 @@ def clean_reasoning_model_output(text):
     
     return cleaned_text
 
-# ---- OpenAI Client ----
+# ---- OpenAI Client Pool ----
+class OpenAIClientPool:
+    def __init__(self, api_urls_keys:dict[str, list[str]], max_workers:int=5):
+        self.api_urls_keys = api_urls_keys
+        self.clients = defaultdict(list)
+        self.all_clients = []
+        self.client_index = 0
+        for base_url, api_keys in api_urls_keys.items():
+            for api_key in api_keys:
+                client = OpenAI(api_key=api_key, base_url=base_url)
+                self.clients[base_url].append(client)
+                self.all_clients.append(client)
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._lock = threading.Lock()
+
+    def chat_completion(self, model, messages, temperature=0.7, max_tokens=2000, stream=False):
+        """
+        增加 stream 参数支持流式输出
+        """
+        with self._lock:
+            client = self.all_clients[self.client_index]
+            self.client_index = (self.client_index + 1) % len(self.all_clients)
+            
+        print(f"Calling OpenAI API. Model: {model} (Stream: {stream})")
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream  # 传 stream 参数
+            )
+            
+            # 如果是流式，直接返回生成器对象，不要去读取 content
+            if stream:
+                return response
+
+            # 如果不是流式，保持原有逻辑
+            raw_content = response.choices[0].message.content.strip()
+            cleaned_content = clean_reasoning_model_output(raw_content)
+            return cleaned_content
+            
+        except Exception as e:
+            print(f"Error calling OpenAI API: {e}")
+            return "Error: Could not get response from LLM."
+
+    def chat_completion_async(self, model, messages, temperature=0.7, max_tokens=2000):
+        """异步版本的chat_completion"""
+        return self.executor.submit(self.chat_completion, model, messages, temperature, max_tokens)
+
+    def batch_chat_completion(self, requests):
+        """
+        并行处理多个LLM请求
+        requests: List of dict with keys: model, messages, temperature, max_tokens
+        """
+        futures = []
+        for req in requests:
+            future = self.chat_completion_async(
+                model=req.get("model", "gpt-4o-mini"),
+                messages=req["messages"],
+                temperature=req.get("temperature", 0.7),
+                max_tokens=req.get("max_tokens", 2000)
+            )
+            futures.append(future)
+        
+        results = []
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as e:
+                print(f"Error in batch completion: {e}")
+                results.append("Error: Could not get response from LLM.")
+        
+        return results
+
+    def shutdown(self):
+        """关闭线程池"""
+        self.executor.shutdown(wait=True)
+
+
+
+
+# ----Sigle OpenAI Client ----
 class OpenAIClient:
     def __init__(self, api_key, base_url=None, max_workers=5):
         self.api_key = api_key
@@ -43,22 +127,31 @@ class OpenAIClient:
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self._lock = threading.Lock()
 
-    def chat_completion(self, model, messages, temperature=0.7, max_tokens=2000):
-        print(f"Calling OpenAI API. Model: {model}")
+    def chat_completion(self, model, messages, temperature=0.7, max_tokens=2000, stream=False):
+        """
+        增加 stream 参数支持流式输出
+        """
+        print(f"Calling OpenAI API. Model: {model} (Stream: {stream})")
         try:
             response = self.client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                stream=stream  # 传 stream 参数
             )
+            
+            # 如果是流式，直接返回生成器对象，不要去读取 content
+            if stream:
+                return response
+
+            # 如果不是流式，保持原有逻辑
             raw_content = response.choices[0].message.content.strip()
-            # 自动清理推理模型的<think>标签
             cleaned_content = clean_reasoning_model_output(raw_content)
             return cleaned_content
+            
         except Exception as e:
             print(f"Error calling OpenAI API: {e}")
-            # Fallback or error handling
             return "Error: Could not get response from LLM."
 
     def chat_completion_async(self, model, messages, temperature=0.7, max_tokens=2000):
@@ -160,13 +253,19 @@ def get_embedding(text, model_name="all-MiniLM-L6-v2", use_cache=True, **kwargs)
             return _embedding_cache[cache_key]
     
     # 检查是否是豆包 embedding 模型（通过模型名称判断）
-    is_doubao_embedding = 'doubao' in model_name.lower() and 'embedding' in model_name.lower()
+    is_doubao_bge_embedding = ('doubao'  in model_name.lower() and 'embedding' in model_name.lower())  or 'bge' in model_name.lower()
     
-    if is_doubao_embedding:
-        # 使用豆包 embedding API
-        embedding_api_key = os.environ.get('EMBEDDING_API_KEY') or os.environ.get('LLM_API_KEY', '')
-        embedding_base_url = os.environ.get('EMBEDDING_BASE_URL') or os.environ.get('LLM_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')
-        
+    if is_doubao_bge_embedding:
+        # 使用豆包或者siliconflow的 embedding API
+        if 'api_key' in kwargs:
+            embedding_api_key = kwargs.get('api_key')
+        else:
+            embedding_api_key = os.environ.get('EMBEDDING_API_KEY') or os.environ.get('LLM_API_KEY', '')
+        if 'base_url' in kwargs:
+            embedding_base_url = kwargs.get('base_url')
+        else:
+            embedding_base_url = os.environ.get('EMBEDDING_BASE_URL') or os.environ.get('LLM_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')
+
         if not embedding_api_key:
             raise RuntimeError("豆包 Embedding API Key 未配置，请设置 EMBEDDING_API_KEY 或 LLM_API_KEY 环境变量")
         

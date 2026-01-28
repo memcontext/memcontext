@@ -1,5 +1,7 @@
 import os
 import json
+import threading
+import atexit
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,6 +11,7 @@ try:
     # 尝试相对导入（当作为包使用时）
     from .utils import (
         OpenAIClient,
+        OpenAIClientPool,
         get_timestamp,
         generate_id,
         gpt_user_profile_analysis,
@@ -28,6 +31,7 @@ except ImportError:
     # 回退到绝对导入（当作为独立模块使用时）
     from utils import (
         OpenAIClient,
+        OpenAIClientPool,
         get_timestamp,
         generate_id,
         gpt_user_profile_analysis,
@@ -66,6 +70,7 @@ class Memcontext:
                  multimodal_config: dict = None,
                  file_storage_manager=None,
                  file_storage_base_path: str = None,
+                 openai_api_urls_keys: Dict[str, List[str]] = None,
                  ):
         self.user_id = user_id
         self.assistant_id = assistant_id
@@ -126,7 +131,10 @@ class Memcontext:
                 ConverterFactory.configure(converter_type, **config)
 
         # Initialize OpenAI Client
-        self.client = OpenAIClient(api_key=openai_api_key, base_url=openai_base_url)
+        if openai_api_urls_keys:
+            self.client = OpenAIClientPool(api_urls_keys=openai_api_urls_keys)
+        else:
+            self.client = OpenAIClient(api_key=openai_api_key, base_url=openai_base_url)
 
         # Define file paths for user-specific data
         self.user_data_dir = os.path.join(self.data_storage_path, "users", self.user_id)
@@ -183,6 +191,8 @@ class Memcontext:
         )
         
         self.mid_term_heat_threshold = mid_term_heat_threshold
+
+        atexit.register(self.client.shutdown)
 
     def _extract_knowledge_from_recent_mid_term(self, pages_to_extract=None):
         """
@@ -333,8 +343,16 @@ class Memcontext:
 
     def add_memory(self, user_input: str, agent_response: str, timestamp: str = None, meta_data: dict = None):
         """ 
-        Adds a new QA pair (memory) to the system.
-        meta_data is not used in the current refactoring but kept for future use.
+        Legacy synchronous method (kept for compatibility).
+        Now calls sync part then async part.
+        """
+        self.add_short_term_memory_sync(user_input, agent_response, timestamp, meta_data)
+        self.trigger_long_term_analysis_async()
+
+    def add_short_term_memory_sync(self, user_input: str, agent_response: str, timestamp: str = None, meta_data: dict = None):
+        """
+        Lightweight sync operation: write to short-term memory (RAM/JSON).
+        This ensures the next turn of conversation can immediately see this history.
         """
         if not timestamp:
             timestamp = get_timestamp()
@@ -346,10 +364,15 @@ class Memcontext:
             "meta_data": meta_data or {}
         }
         self.short_term_memory.add_qa_pair(qa_pair)
-        print(f"Memorycontext: Added QA to short-term. User: {user_input[:30]}...")
+        print(f"Memorycontext: Added QA to short-term (Sync). User: {user_input[:30]}...")
 
+    def trigger_long_term_analysis_async(self):
+        """
+        Heavyweight operation: mid-term migration, profile analysis, knowledge extraction.
+        Should typically be run in a background thread.
+        """
         if self.short_term_memory.is_full():
-            print("Memorycontext: Short-term memory full. Processing to mid-term.")
+            print("Memorycontext: Short-term memory full. Processing to mid-term (Async).")
             self.updater.process_short_term_to_mid_term()
         
         # After any memory addition that might impact mid-term, check for profile updates
@@ -891,6 +914,397 @@ class Memcontext:
         self.add_memory(user_input=query, agent_response=response_content, timestamp=get_timestamp())
         
         return response_content
+# 在 Memcontext 类中添加此新方法
+
+    def get_response_stream(self, query: str, relationship_with_user="friend", style_hint="", user_conversation_meta_data: dict = None):
+        """
+        流式版本的 get_response
+        """
+        print(f"Memorycontext: Streaming response for query: '{query[:50]}...'")
+
+        # === 1. 复用原有的检索逻辑 (复制 get_response 的前半部分) ===
+        # ... (此处省略 Step 0 到 Step 8 的代码，与原 get_response 完全一致，用于构建 Prompt) ...
+        # 假设此时你已经得到了 messages 列表
+        
+        # 注意：如果 Step 0 中检测到文件并直接有了静态 response (例如 "找到文件...")
+        # 需要改成 yield 并存储，如下：
+        # if file_response:
+        #     yield file_response
+        #     self.add_memory(user_input=query, agent_response=file_response, timestamp=get_timestamp())
+        #     return
+        # 0. 检测用户是否在查询文件（通过 file_id 或 original_filename）
+        if self.file_storage_manager:
+            try:
+                # 0.1 尝试通过 file_id 查询
+                file_id = self._extract_file_id_from_query(query)
+                file_record = None
+                file_storage_id = None
+                
+                if file_id:
+                    # 先尝试直接查询（可能是 file_storage_id，32位十六进制）
+                    file_record = self.file_storage_manager.get_file_record(file_id)
+                    if file_record:
+                        file_storage_id = file_id
+                    else:
+                        # 如果直接查询失败，可能是 source_file_id（64位十六进制），需要从记忆中查找对应的 file_storage_id
+                        print(f"Memorycontext: File ID {file_id} not found in file_storage, searching in memories for file_storage_id...")
+                        file_storage_id = self._find_file_storage_id_from_memory(file_id)
+                        if file_storage_id:
+                            file_record = self.file_storage_manager.get_file_record(file_storage_id)
+                
+                # 0.2 如果没有通过 file_id 找到，尝试通过文件名查询
+                filename = None
+                if not file_record:
+                    filename = self._extract_filename_from_query(query)
+                    if filename:
+                        print(f"Memorycontext: Searching file by filename: {filename}")
+                        file_record = self.file_storage_manager.find_file_by_name(filename)
+                        if file_record:
+                            file_storage_id = file_record.file_id
+                
+                # 0.3 如果找到了文件记录，返回文件信息
+                if file_record and file_storage_id:
+                    file_path = file_record.stored_path
+                    if os.path.exists(file_path):
+                        response = f"找到文件：{file_record.original_filename}\n\n文件信息：\n- 文件ID (file_storage_id): {file_storage_id}\n- 文件路径：{file_path}\n- 文件类型：{file_record.file_type.value if hasattr(file_record.file_type, 'value') else file_record.file_type}\n- 原始文件名：{file_record.original_filename}\n- 上传时间：{file_record.upload_time}"
+                        
+                        # 添加文件元数据信息
+                        if file_record.metadata:
+                            metadata = file_record.metadata
+                            if metadata.get('file_size'):
+                                response += f"\n- 文件大小：{metadata['file_size']} 字节"
+                            if metadata.get('duration'):
+                                response += f"\n- 时长：{metadata['duration']:.2f} 秒"
+                            if metadata.get('width') and metadata.get('height'):
+                                response += f"\n- 分辨率：{metadata['width']}x{metadata['height']}"
+                            if metadata.get('source_file_id'):
+                                response += f"\n- source_file_id (hash): {metadata['source_file_id']}"
+                        
+                        return response
+                    else:
+                        return f"找到文件记录，但文件不存在：{file_path}"
+                elif file_id:
+                    return f"未找到文件ID {file_id} 对应的文件路径。可能是 source_file_id，但未在记忆中找到对应的 file_storage_id。"
+                elif filename:
+                    return f"未找到文件名 {filename} 对应的文件。"
+            except Exception as e:
+                print(f"Memorycontext: Error querying file: {e}")
+                import traceback
+                traceback.print_exc()
+                # 继续正常流程，不中断
+
+        # 1. Retrieve context
+        # 检测用户是否在询问视频相关内容
+        is_video_query = any(keyword in query for keyword in [
+            '视频', '这个视频', '该视频', '影片', 'movie', 'video'
+        ])
+        
+        # 如果用户询问视频相关内容，找出所有视频片段
+        # 优先使用file_storage_id，如果没有则使用source_file_id
+        all_video_pages = []
+        if is_video_query:
+            print(f"Memorycontext: Video query detected, collecting all video pages from mid_term memory")
+            # 统计所有视频ID及其片段数
+            video_ids = set()
+            for session_id, session_data in self.mid_term_memory.sessions.items():
+                for page in session_data.get("details", []):
+                    page_meta = page.get('meta_data', {}) or {}
+                    page_video_id = page_meta.get('file_storage_id') or page_meta.get('source_file_id')
+                    if page_video_id:
+                        video_ids.add(page_video_id)
+                        all_video_pages.append(page)
+            
+            print(f"Memorycontext: Found {len(all_video_pages)} video pages from {len(video_ids)} video(s): {list(video_ids)[:3]}...")
+            
+            if all_video_pages:
+                # 按时间范围排序
+                def get_time_range(page):
+                    meta = page.get('meta_data', {}) or {}
+                    time_range = meta.get('time_range', '')
+                    if isinstance(time_range, str) and '-' in time_range:
+                        try:
+                            # 处理格式如 "240.00s-274.50s" 或 "240.00-274.50"
+                            start_str = time_range.split('-')[0].replace('s', '').strip()
+                            start_time = float(start_str)
+                            return start_time
+                        except:
+                            return 0
+                    # 如果没有time_range，尝试从chunk_index排序
+                    return meta.get('chunk_index', 0)
+                
+                all_video_pages.sort(key=get_time_range)
+                print(f"Memorycontext: Using all {len(all_video_pages)} video pages for video query")
+        
+        # 如果找到了视频片段，使用它们；否则使用正常的检索逻辑
+        if all_video_pages:
+            retrieval_results = self.retriever.retrieve_context(
+                user_query=query,
+                user_id=self.user_id
+            )
+            retrieved_pages = all_video_pages  # 使用所有视频片段
+            retrieved_user_knowledge = retrieval_results["retrieved_user_knowledge"]
+            retrieved_assistant_knowledge = retrieval_results["retrieved_assistant_knowledge"]
+        else:
+            retrieval_results = self.retriever.retrieve_context(
+                user_query=query,
+                user_id=self.user_id
+            )
+            retrieved_pages = retrieval_results["retrieved_pages"]
+            retrieved_user_knowledge = retrieval_results["retrieved_user_knowledge"]
+            retrieved_assistant_knowledge = retrieval_results["retrieved_assistant_knowledge"]
+        
+        # 1.1 识别需要的 metadata 字段并重新排序检索结果
+        # 如果已经收集了所有视频片段（all_video_pages），跳过过滤，保持所有片段
+        if not is_video_query or not all_video_pages:
+            needed_metadata_fields = self._needs_metadata(query)
+            retrieved_pages = self._filter_and_rank_by_metadata(retrieved_pages, needed_metadata_fields)
+            if needed_metadata_fields:
+                print(f"Memorycontext: Query needs metadata fields: {needed_metadata_fields}, re-ranked {len(retrieved_pages)} pages")
+        else:
+            print(f"Memorycontext: Using all {len(retrieved_pages)} video pages, skipping metadata filtering")
+
+        # 2. Get short-term history
+        short_term_history = self.short_term_memory.get_all()
+        history_text = "\n".join([
+            f"User: {qa.get('user_input', '')}\nAssistant: {qa.get('agent_response', '')} (Time: {qa.get('timestamp', '')})"
+            for qa in short_term_history
+        ])
+
+        # 3. Format retrieved mid-term pages (retrieval_queue equivalent)
+        def _format_meta(meta_obj):
+            if not meta_obj or not isinstance(meta_obj, dict) or len(meta_obj) == 0:
+                return "None"
+            try:
+                # 格式化 metadata，突出关键字段
+                formatted = []
+                key_fields = ['name', 'video_name', 'time_range', 'chunk_index', 'objects_detected', 'scene_label', 'duration_seconds']
+                for key in key_fields:
+                    if key in meta_obj and meta_obj[key]:
+                        formatted.append(f"  {key}: {meta_obj[key]}")
+                # 添加其他字段
+                for key, value in meta_obj.items():
+                    if key not in key_fields and value:
+                        formatted.append(f"  {key}: {value}")
+                if formatted:
+                    return "\n" + "\n".join(formatted)
+                return "None"
+            except TypeError:
+                return str(meta_obj)
+
+        retrieval_text = "\n".join([
+            f"【Historical Memory】\n"
+            f"User: {page.get('user_input', '')}\n"
+            f"Assistant: {page.get('agent_response', '')}\n"
+            f"Time: {page.get('timestamp', '')}\n"
+            f"Conversation chain overview: {page.get('meta_info','N/A')}\n"
+            f"Metadata:{_format_meta(page.get('meta_data', {}) or {})}"
+            for page in retrieved_pages
+        ])
+        # 提取查询中提到的视频信息（如果有），用于过滤结果
+        query_video_id = None
+        if '描述' in query and '的' in query:
+            import re
+            # 尝试从查询中提取视频ID（格式：描述{视频id}的{time_range}）
+            video_match = re.search(r'描述(.+?)的', query)
+            if video_match:
+                query_video_id = video_match.group(1)
+        
+        # 兼容旧格式：尝试提取视频路径或名称
+        if not query_video_id and '视频' in query:
+            import re
+            # 尝试从查询中提取视频路径或名称
+            video_match = re.search(r'["\']?([^"\']+\.(mp4|avi|mov|mkv|webm))["\']?', query)
+            if video_match:
+                query_video_id = video_match.group(1)
+            else:
+                # 尝试提取"xxx视频"格式
+                video_match = re.search(r'([^\s]+)视频', query)
+                if video_match:
+                    query_video_id = video_match.group(1)
+        
+        query_video_path = query_video_id  # 为了兼容性，使用同一个变量
+        
+        retrieval_text_parts = []
+        for page in retrieved_pages:
+            # 安全获取 meta_data，确保是字典类型
+            try:
+                page_meta = page.get('meta_data', {})
+                if not isinstance(page_meta, dict):
+                    page_meta = {}
+            except (AttributeError, TypeError):
+                page_meta = {}
+            
+            # 从 user_input 中提取视频ID（格式：描述{视频id}的{time_range}）
+            user_input = page.get('user_input', '')
+            page_video_id = None
+            page_video_path = None  # 用于兼容旧数据
+            
+            if '描述' in user_input and '的' in user_input:
+                import re
+                try:
+                    # 匹配格式：描述{视频id}的{time_range}
+                    match = re.search(r'描述(.+?)的', user_input)
+                    if match:
+                        page_video_id = match.group(1)
+                except Exception as e:
+                    print(f"Memorycontext: Error extracting video_id from user_input: {e}")
+            
+            # 如果从 user_input 中提取失败，尝试从 meta_data 中获取（使用 .get() 安全访问）
+            if not page_video_id:
+                page_video_id = page_meta.get('file_storage_id') or page_meta.get('source_file_id')
+            
+            # 为了兼容性，也尝试获取 video_path（用于旧数据）
+            if not page_video_id:
+                page_video_path = page_meta.get('video_path') or page_meta.get('video_name')
+                if page_video_path:
+                    page_video_id = page_video_path  # 使用 video_path 作为 fallback
+            else:
+                # 如果有 video_id，也尝试获取 video_path 用于显示
+                page_video_path = page_meta.get('video_path') or page_meta.get('video_name')
+            
+            # 如果查询中明确指定了视频ID/路径，只返回匹配的视频内容
+            # 但如果已经收集了所有视频片段（is_video_query且all_video_pages），跳过这个过滤
+            if query_video_path and not (is_video_query and all_video_pages):
+                # 检查是否匹配（支持 video_id 或 video_path 匹配）
+                matched = False
+                if page_video_id:
+                    try:
+                        if query_video_path in str(page_video_id) or str(page_video_id) in query_video_path:
+                            matched = True
+                    except TypeError:
+                        pass
+                elif page_video_path:
+                    # 回退到 video_path 匹配（兼容旧数据）
+                    try:
+                        if query_video_path in str(page_video_path) or str(page_video_path) in query_video_path:
+                            matched = True
+                    except TypeError:
+                        pass
+                
+                if not matched:
+                    continue  # 跳过不匹配的视频
+            
+            page_text = f"【Historical Memory】\nUser: {page.get('user_input', '')}\nAssistant: {page.get('agent_response', '')}\nTime: {page.get('timestamp', '')}\nConversation chain overview: {page.get('meta_info','N/A')}"
+            # 显示视频ID或路径（优先显示ID）
+            if page_video_id:
+                page_text += f"\n[Video Source: {page_video_id}]"
+            elif page_video_path:
+                page_text += f"\n[Video Source: {page_video_path}]"
+            retrieval_text_parts.append(page_text)
+        
+        retrieval_text = "\n\n".join(retrieval_text_parts)
+
+        # 4. Get user profile
+        user_profile_text = self.user_long_term_memory.get_raw_user_profile(self.user_id)
+        if not user_profile_text or user_profile_text.lower() == "none": 
+            user_profile_text = "No detailed profile available yet."
+
+        # 5. Format retrieved user knowledge for background
+        user_knowledge_background = ""
+        if retrieved_user_knowledge:
+            user_knowledge_background = "\n【Relevant User Knowledge Entries】\n"
+            for kn_entry in retrieved_user_knowledge:
+                user_knowledge_background += f"- {kn_entry['knowledge']} (Recorded: {kn_entry['timestamp']})\n"
+        
+        background_context = f"【User Profile】\n{user_profile_text}\n{user_knowledge_background}"
+
+        # 6. Format retrieved Assistant Knowledge (from assistant's LTM)
+        # Use retrieved assistant knowledge instead of all assistant knowledge
+        assistant_knowledge_text_for_prompt = "【Assistant Knowledge Base】\n"
+        if retrieved_assistant_knowledge:
+            for ak_entry in retrieved_assistant_knowledge:
+                assistant_knowledge_text_for_prompt += f"- {ak_entry['knowledge']} (Recorded: {ak_entry['timestamp']})\n"
+        else:
+            assistant_knowledge_text_for_prompt += "- No relevant assistant knowledge found for this query.\n"
+
+        # 7. Format user_conversation_meta_data (if provided)
+        meta_data_text_for_prompt = "【Current Conversation Metadata】\n"
+        if user_conversation_meta_data:
+            try:
+                meta_data_text_for_prompt += json.dumps(user_conversation_meta_data, ensure_ascii=False, indent=2)
+            except TypeError:
+                meta_data_text_for_prompt += str(user_conversation_meta_data)
+        else:
+            meta_data_text_for_prompt += "None provided for this turn."
+
+        # 8. Construct Prompts
+        system_prompt_text = prompts.GENERATE_SYSTEM_RESPONSE_SYSTEM_PROMPT.format(
+            relationship=relationship_with_user,
+            assistant_knowledge_text=assistant_knowledge_text_for_prompt,
+            meta_data_text=meta_data_text_for_prompt # Using meta_data_text placeholder for user_conversation_meta_data
+        )
+        
+        # 8. Construct Prompts
+        user_prompt_text = prompts.GENERATE_SYSTEM_RESPONSE_USER_PROMPT.format(
+            history_text=history_text,
+            retrieval_text=retrieval_text,
+            background=background_context,
+            relationship=relationship_with_user,
+            query=query
+        )
+        
+        messages = [
+            {"role": "system", "content": system_prompt_text},
+            {"role": "user", "content": user_prompt_text}
+        ]
+
+        # 流式调用与存储 ===
+        
+        print("Memorycontext: Calling LLM for streaming response generation...")
+        
+        full_response_content = "" # 用于拼接完整回复，以便存入记忆
+        
+        try:
+            # 调用底层，开启 stream=True
+            stream = self.client.chat_completion(
+                model=self.llm_model, 
+                messages=messages, 
+                temperature=0.7, 
+                max_tokens=1500,
+                stream=True 
+            )
+            
+            # 迭代流对象
+            for chunk in stream:
+                content = None
+                # 兼容不同的 SDK 返回格式
+                if hasattr(chunk, 'choices') and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+                    if hasattr(delta, 'content'):
+                        content = delta.content
+                
+                if content:
+                    full_response_content += content
+                    yield content # 实时把字符吐给 app.py
+            
+            # 只有当流走完，我们才拥有了完整的回复，这时候存入记忆
+            if full_response_content:
+                # 1. 同步：立即写入 Short-Term Memory，确保下一轮对话可见
+                try:
+                    self.add_short_term_memory_sync(
+                        user_input=query, 
+                        agent_response=full_response_content, 
+                        timestamp=get_timestamp()
+                    )
+                except Exception as e:
+                    print(f"Error in sync add_short_term_memory: {e}")
+
+                # 2. 异步：启动后台线程处理长期记忆分析（耗时操作）
+                def async_long_term_process():
+                    try:
+                        self.trigger_long_term_analysis_async()
+                    except Exception as e:
+                        print(f"Error in async long_term_process: {e}")
+                
+                threading.Thread(target=async_long_term_process).start()
+                
+        except Exception as e:
+            print(f"Streaming error: {e}")
+            # 出错时尽量保存已生成的内容
+            if full_response_content:
+                 self.add_memory(user_input=query, agent_response=full_response_content, timestamp=get_timestamp())
+            yield f"\n[System Error: {str(e)}]"
+
 
     # --- Multimodal ingestion ---
     def add_multimodal_memory(
