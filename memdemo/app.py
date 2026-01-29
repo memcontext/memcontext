@@ -36,6 +36,7 @@ executor = ThreadPoolExecutor(max_workers=10)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from memcontext import Memcontext
 from memcontext.utils import get_timestamp
+from memcontext.storage import SupabaseStore
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
@@ -124,6 +125,51 @@ def init_memory():
     embedding_base_url = GLOBAL_CONFIG.get("embedding_base_url", "https://ark.cn-beijing.volces.com/api/v3")
     api_urls_keys = GLOBAL_CONFIG.get("openai_api_urls_keys", {})
 
+    # Supabase 配置
+    supa_cfg = GLOBAL_CONFIG.get("supabase", {}) or {}
+    supa_url = supa_cfg.get("url")
+    supa_key = supa_cfg.get("service_key")
+    supa_schema = supa_cfg.get("schema", "public")
+    supa_sessions_table = supa_cfg.get("mid_sessions_table", "sessions")
+    supa_pages_table = supa_cfg.get("mid_pages_table", "pages")
+    ltm_user_profiles_table = supa_cfg.get("ltm_user_profiles_table", "long_term_user_profiles")
+    ltm_user_knowledge_table = supa_cfg.get("ltm_user_knowledge_table", "long_term_user_knowledge")
+    ltm_assistant_knowledge_table = supa_cfg.get("ltm_assistant_knowledge_table", "long_term_assistant_knowledge")
+
+    supa_store = None
+    if supa_url and supa_key:
+        try:
+            # 从 config 读取 Postgres 连接信息（用于自动建表）
+            postgres_host = supa_cfg.get("postgres_host")
+            postgres_port = supa_cfg.get("postgres_port", 5432)
+            postgres_db = supa_cfg.get("postgres_db", "postgres")
+            postgres_user = supa_cfg.get("postgres_user", "postgres")
+            postgres_password = supa_cfg.get("postgres_password")
+            postgres_connection_string = supa_cfg.get("postgres_connection_string")
+            
+            # embedding_dim 与当前中期记忆 embedding 模型维度保持一致
+            supa_store = SupabaseStore(
+                supabase_url=supa_url,
+                supabase_key=supa_key,
+                embedding_dim=2048,
+                schema=supa_schema,
+                mid_sessions_table=supa_sessions_table,
+                mid_pages_table=supa_pages_table,
+                ltm_user_profiles_table=ltm_user_profiles_table,
+                ltm_user_knowledge_table=ltm_user_knowledge_table,
+                ltm_assistant_knowledge_table=ltm_assistant_knowledge_table,
+                auto_create_tables=True,
+                postgres_connection_string=postgres_connection_string,
+                postgres_host=postgres_host,
+                postgres_port=postgres_port,
+                postgres_db=postgres_db,
+                postgres_user=postgres_user,
+                postgres_password=postgres_password,
+            )
+            print(f"SupabaseStore initialized for mid-term memory: {supa_url}")
+        except Exception as e:
+            print(f"Warning: Failed to initialize SupabaseStore, fallback to local mid_term.json. Error: {e}")
+
     try:
         os.makedirs(data_path, exist_ok=True)
         
@@ -146,7 +192,8 @@ def init_memory():
             embedding_model_name=GLOBAL_CONFIG.get("embedding_model_name", "all-MiniLM-L6-v2"),
             embedding_model_kwargs={"api_key":embedding_api_key, "base_url":embedding_base_url},
             file_storage_base_path=file_storage_base_path,
-            openai_api_urls_keys=api_urls_keys
+            openai_api_urls_keys=api_urls_keys,
+            storage=supa_store,
         )
         
         session_id = secrets.token_hex(8)
@@ -607,7 +654,51 @@ def clear_memory():
         sess_cfg = session.get('memory_config', {})
         # raw_config 是 GLOBAL_CONFIG 的副本
         raw_config = sess_cfg.get('raw_config', GLOBAL_CONFIG)
-        
+
+        # Supabase 配置（与 init_memory 保持一致）
+        supa_cfg = raw_config.get("supabase", {}) or {}
+        supa_url = supa_cfg.get("url")
+        supa_key = supa_cfg.get("service_key")
+        supa_schema = supa_cfg.get("schema", "public")
+        supa_sessions_table = supa_cfg.get("mid_sessions_table", "sessions")
+        supa_pages_table = supa_cfg.get("mid_pages_table", "pages")
+        ltm_user_profiles_table = supa_cfg.get("ltm_user_profiles_table", "long_term_user_profiles")
+        ltm_user_knowledge_table = supa_cfg.get("ltm_user_knowledge_table", "long_term_user_knowledge")
+        ltm_assistant_knowledge_table = supa_cfg.get("ltm_assistant_knowledge_table", "long_term_assistant_knowledge")
+
+        # 从 config 读取 Postgres 连接信息
+        postgres_host = supa_cfg.get("postgres_host")
+        postgres_port = supa_cfg.get("postgres_port", 5432)
+        postgres_db = supa_cfg.get("postgres_db", "postgres")
+        postgres_user = supa_cfg.get("postgres_user", "postgres")
+        postgres_password = supa_cfg.get("postgres_password")
+        postgres_connection_string = supa_cfg.get("postgres_connection_string")
+
+        supa_store = None
+        if supa_url and supa_key:
+            try:
+                supa_store = SupabaseStore(
+                    supabase_url=supa_url,
+                    supabase_key=supa_key,
+                    embedding_dim=2048,
+                    schema=supa_schema,
+                    mid_sessions_table=supa_sessions_table,
+                    mid_pages_table=supa_pages_table,
+                    ltm_user_profiles_table=ltm_user_profiles_table,
+                    ltm_user_knowledge_table=ltm_user_knowledge_table,
+                    ltm_assistant_knowledge_table=ltm_assistant_knowledge_table,
+                    auto_create_tables=True,
+                    postgres_connection_string=postgres_connection_string,
+                    postgres_host=postgres_host,
+                    postgres_port=postgres_port,
+                    postgres_db=postgres_db,
+                    postgres_user=postgres_user,
+                    postgres_password=postgres_password,
+                )
+                print(f"SupabaseStore re-initialized for mid-term memory in clear_memory: {supa_url}")
+            except Exception as e:
+                print(f"Warning: Failed to re-initialize SupabaseStore in clear_memory, fallback to local mid_term.json. Error: {e}")
+
         # 重建 Memcontext
         new_memory_system = Memcontext(
             user_id=memory_system.user_id,
@@ -622,7 +713,11 @@ def clear_memory():
             mid_term_heat_threshold=raw_config.get("mid_term_heat_threshold", 7.0),
             llm_model=sess_cfg.get('model', raw_config.get("llm_model")),
             embedding_model_name=raw_config.get("embedding_model_name", "all-MiniLM-L6-v2"), 
-            embedding_model_kwargs={"api_key":raw_config.get("embedding_api_key", ""), "base_url":raw_config.get("embedding_base_url", "https://ark.cn-beijing.volces.com/api/v3")},
+            embedding_model_kwargs={
+                "api_key": raw_config.get("embedding_api_key", ""),
+                "base_url": raw_config.get("embedding_base_url", "https://ark.cn-beijing.volces.com/api/v3"),
+            },
+            storage=supa_store,
         )
         
         memory_systems[session_id] = new_memory_system
@@ -652,4 +747,4 @@ def import_conversations():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5019)
+    app.run(debug=False, host='0.0.0.0', port=5019)

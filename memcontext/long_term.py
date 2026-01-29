@@ -2,21 +2,44 @@ import json
 import numpy as np
 import faiss
 from collections import deque
+from typing import Optional
 
 from .utils import get_timestamp, get_embedding, normalize_vector, ensure_directory_exists
+from .storage import SupabaseStore
+
 
 class LongTermMemory:
-    def __init__(self, file_path, knowledge_capacity=100, embedding_model_name: str = "all-MiniLM-L6-v2", embedding_model_kwargs: dict = None):
+    def __init__(
+        self,
+        file_path,
+        knowledge_capacity=100,
+        embedding_model_name: str = "all-MiniLM-L6-v2",
+        embedding_model_kwargs: dict = None,
+        storage: Optional[SupabaseStore] = None,
+        owner_id: Optional[str] = None,
+        owner_type: str = "user",  # "user" 或 "assistant"
+    ):
+        """
+        如果提供了 SupabaseStore + owner_id，则长期记忆会同时写入 Supabase：
+        - owner_type="user"  → long_term_user_* 表
+        - owner_type="assistant" → long_term_assistant_* 表
+        否则退回到本地 JSON 文件模式。
+        """
         self.file_path = file_path
         ensure_directory_exists(self.file_path)
         self.knowledge_capacity = knowledge_capacity
-        self.user_profiles = {} # {user_id: {data: "profile_string", "last_updated": "timestamp"}}
+        self.user_profiles = {}  # {user_id: {data: "profile_string", "last_updated": "timestamp"}}
         # Use deques for knowledge bases to easily manage capacity
-        self.knowledge_base = deque(maxlen=self.knowledge_capacity) # For general/user private knowledge
-        self.assistant_knowledge = deque(maxlen=self.knowledge_capacity) # For assistant specific knowledge
+        self.knowledge_base = deque(maxlen=self.knowledge_capacity)  # For general/user private knowledge
+        self.assistant_knowledge = deque(maxlen=self.knowledge_capacity)  # For assistant specific knowledge
 
         self.embedding_model_name = embedding_model_name
         self.embedding_model_kwargs = embedding_model_kwargs if embedding_model_kwargs is not None else {}
+
+        self.storage: Optional[SupabaseStore] = storage
+        self.owner_id: Optional[str] = owner_id
+        self.owner_type: str = owner_type
+
         self.load()
 
     def update_user_profile(self, user_id, new_data, merge=True):
@@ -30,11 +53,29 @@ class LongTermMemory:
             # If merge=False or no existing data, replace with new data
             updated_data = new_data
         
+        ts = get_timestamp()
         self.user_profiles[user_id] = {
             "data": updated_data,
-            "last_updated": get_timestamp()
+            "last_updated": ts,
         }
         print(f"LongTermMemory: Updated user profile for {user_id} (merge={merge}).")
+
+        # 如果支持 Supabase，并且这是用户画像（owner_type=user），同步到数据库
+        if (
+            self.storage is not None
+            and self.owner_type == "user"
+            and self.owner_id is not None
+            and user_id == self.owner_id
+        ):
+            try:
+                self.storage.upsert_user_profile(
+                    user_id=self.owner_id,
+                    profile_text=updated_data,
+                    last_updated=ts,
+                )
+            except Exception as e:
+                print(f"LongTermMemory: Error upserting user profile to Supabase: {e}")
+
         self.save()
 
     def get_raw_user_profile(self, user_id):
@@ -62,6 +103,27 @@ class LongTermMemory:
         }
         knowledge_deque.append(entry)
         print(f"LongTermMemory: Added {type_name}. Current count: {len(knowledge_deque)}.")
+
+        # 同步到 Supabase（根据 owner_type 区分 user / assistant）
+        if self.storage is not None and self.owner_id is not None:
+            try:
+                if self.owner_type == "user" and knowledge_deque is self.knowledge_base:
+                    self.storage.add_user_knowledge(
+                        user_id=self.owner_id,
+                        knowledge_text=knowledge_text,
+                        embedding=vec,
+                        timestamp=entry["timestamp"],
+                    )
+                elif self.owner_type == "assistant" and knowledge_deque is self.assistant_knowledge:
+                    self.storage.add_assistant_knowledge(
+                        assistant_id=self.owner_id,
+                        knowledge_text=knowledge_text,
+                        embedding=vec,
+                        timestamp=entry["timestamp"],
+                    )
+            except Exception as e:
+                print(f"LongTermMemory: Error syncing {type_name} to Supabase: {e}")
+
         self.save()
 
     def add_user_knowledge(self, knowledge_text):
@@ -71,9 +133,26 @@ class LongTermMemory:
         self.add_knowledge_entry(knowledge_text, self.assistant_knowledge, "assistant knowledge")
 
     def get_user_knowledge(self):
+        # 如果配置了 Supabase，则优先从远端加载，限制为 capacity
+        if self.storage is not None and self.owner_type == "user" and self.owner_id is not None:
+            try:
+                return self.storage.get_user_knowledge(
+                    user_id=self.owner_id,
+                    limit=self.knowledge_capacity,
+                )
+            except Exception as e:
+                print(f"LongTermMemory: Error loading user knowledge from Supabase, fallback to local. Error: {e}")
         return list(self.knowledge_base)
 
     def get_assistant_knowledge(self):
+        if self.storage is not None and self.owner_type == "assistant" and self.owner_id is not None:
+            try:
+                return self.storage.get_assistant_knowledge(
+                    assistant_id=self.owner_id,
+                    limit=self.knowledge_capacity,
+                )
+            except Exception as e:
+                print(f"LongTermMemory: Error loading assistant knowledge from Supabase, fallback to local. Error: {e}")
         return list(self.assistant_knowledge)
 
     def _search_knowledge_deque(self, query, knowledge_deque: deque, threshold=0.1, top_k=5):
@@ -126,11 +205,50 @@ class LongTermMemory:
         return results
 
     def search_user_knowledge(self, query, threshold=0.1, top_k=5):
+        # 如果配置了 Supabase，则优先用向量检索
+        if self.storage is not None and self.owner_type == "user" and self.owner_id is not None:
+            try:
+                query_vec = get_embedding(
+                    query,
+                    model_name=self.embedding_model_name,
+                    **self.embedding_model_kwargs,
+                )
+                query_vec = normalize_vector(query_vec)
+                results = self.storage.search_user_knowledge_by_embedding(
+                    user_id=self.owner_id,
+                    query_embedding=query_vec,
+                    threshold=threshold,
+                    top_k=top_k,
+                )
+                print(f"LongTermMemory: Searched user knowledge via Supabase for '{query[:30]}...'. Found {len(results)} matches.")
+                return results
+            except Exception as e:
+                print(f"LongTermMemory: Error searching user knowledge via Supabase, fallback to local. Error: {e}")
+
         results = self._search_knowledge_deque(query, self.knowledge_base, threshold, top_k)
         print(f"LongTermMemory: Searched user knowledge for '{query[:30]}...'. Found {len(results)} matches.")
         return results
 
     def search_assistant_knowledge(self, query, threshold=0.1, top_k=5):
+        if self.storage is not None and self.owner_type == "assistant" and self.owner_id is not None:
+            try:
+                query_vec = get_embedding(
+                    query,
+                    model_name=self.embedding_model_name,
+                    **self.embedding_model_kwargs,
+                )
+                query_vec = normalize_vector(query_vec)
+                results = self.storage.search_assistant_knowledge_by_embedding(
+                    assistant_id=self.owner_id,
+                    query_embedding=query_vec,
+                    threshold=threshold,
+                    top_k=top_k,
+                )
+                print(f"LongTermMemory: Searched assistant knowledge via Supabase for '{query[:30]}...'. Found {len(results)} matches.")
+                return results
+            except Exception as e:
+                print(f"LongTermMemory: Error searching assistant knowledge via Supabase, fallback to local. Error: {e}")
+
         results = self._search_knowledge_deque(query, self.assistant_knowledge, threshold, top_k)
         print(f"LongTermMemory: Searched assistant knowledge for '{query[:30]}...'. Found {len(results)} matches.")
         return results
