@@ -4,11 +4,13 @@ from collections import defaultdict
 import faiss
 import heapq
 from datetime import datetime
+from typing import Optional
 
 from .utils import (
     get_timestamp, generate_id, get_embedding, normalize_vector,
     compute_time_decay, ensure_directory_exists, OpenAIClient
 )
+from .storage import MemoryStorage
 
 # Heat computation constants (can be tuned or made configurable)
 HEAT_ALPHA = 1.0
@@ -29,17 +31,37 @@ def compute_segment_heat(session, alpha=HEAT_ALPHA, beta=HEAT_BETA, gamma=HEAT_G
     return alpha * N_visit + beta * L_interaction + gamma * R_recency
 
 class MidTermMemory:
-    def __init__(self, file_path: str, client: OpenAIClient, max_capacity=2000, embedding_model_name: str = "all-MiniLM-L6-v2", embedding_model_kwargs: dict = None):
+    def __init__(
+        self,
+        file_path: str,
+        client: OpenAIClient,
+        max_capacity: int = 2000,
+        embedding_model_name: str = "all-MiniLM-L6-v2",
+        embedding_model_kwargs: Optional[dict] = None,
+        storage: Optional[MemoryStorage] = None,
+        user_id: Optional[str] = None,
+    ):
+        """
+        如果提供了 storage + user_id，则所有持久化和检索优先走存储后端（如 SupabaseStore）；
+        否则回退到原来的本地 JSON 文件 + FAISS 方案。
+        """
         self.file_path = file_path
-        ensure_directory_exists(self.file_path)
+        # 仅在本地文件模式下需要确保目录存在
+        if storage is None:
+            ensure_directory_exists(self.file_path)
+
         self.client = client
         self.max_capacity = max_capacity
-        self.sessions = {} # {session_id: session_object}
-        self.access_frequency = defaultdict(int) # {session_id: access_count_for_lfu}
+        self.sessions = {}  # {session_id: session_object}
+        self.access_frequency = defaultdict(int)  # {session_id: access_count_for_lfu}
         self.heap = []  # Min-heap storing (-H_segment, session_id) for hottest segments
 
         self.embedding_model_name = embedding_model_name
         self.embedding_model_kwargs = embedding_model_kwargs if embedding_model_kwargs is not None else {}
+
+        self.storage: Optional[MemoryStorage] = storage
+        self.user_id: Optional[str] = user_id
+
         self.load()
 
     def get_page_by_id(self, page_id):
@@ -89,9 +111,17 @@ class MidTermMemory:
             # For now, assuming internal consistency or that Memcontext class manages higher-level links
 
         self.rebuild_heap()
-        self.save()
-        print(f"MidTermMemory: Evicted session {lfu_sid}.")
 
+        # 如果有存储后端，通知其删除；否则回退到本地 save()
+        if self.storage is not None and self.user_id is not None:
+            try:
+                self.storage.delete_session(self.user_id, lfu_sid)
+            except Exception as e:
+                print(f"MidTermMemory: Error deleting session {lfu_sid} from storage: {e}")
+        else:
+            self.save()
+        print(f"MidTermMemory: Evicted session {lfu_sid}.")
+# NOTE 如果没有相似度得分大于0.6的匹配对话就add-session
     def add_session(self, summary, details, summary_keywords=None):
         session_id = generate_id("session")
         summary_vec = get_embedding(
@@ -167,7 +197,20 @@ class MidTermMemory:
         print(f"MidTermMemory: Added new session {session_id}. Initial heat: {session_obj['H_segment']:.2f}.")
         if len(self.sessions) > self.max_capacity:
             self.evict_lfu()
-        self.save()
+
+        # 落库：有 storage 时优先调用存储后端，否则回退到本地 JSON
+        if self.storage is not None and self.user_id is not None:
+            try:
+                self.storage.upsert_session_with_pages(
+                    user_id=self.user_id,
+                    session=session_obj,
+                    pages=processed_details,
+                )
+            except Exception as e:
+                print(f"MidTermMemory: Error upserting session {session_id} to storage: {e}")
+        else:
+            self.save()
+
         return session_id
 
     def rebuild_heap(self):
@@ -194,7 +237,7 @@ class MidTermMemory:
         
         best_sid = None
         best_overall_score = -1
-
+# TODO 改成到superbase数据库检索与page最相关session
         for sid, existing_session in self.sessions.items():
             existing_summary_vec = np.array(existing_session["summary_embedding"], dtype=np.float32)
             semantic_sim = float(np.dot(existing_summary_vec, new_summary_vec))
@@ -264,28 +307,113 @@ class MidTermMemory:
             target_session["last_visit_time"] = get_timestamp() # Update last visit time on modification
             target_session["H_segment"] = compute_segment_heat(target_session)
             self.rebuild_heap() # Rebuild heap as heat has changed
-            self.save()
+
+            # 同步到存储后端
+            if self.storage is not None and self.user_id is not None:
+                try:
+                    self.storage.append_pages_to_session(
+                        user_id=self.user_id,
+                        session_id=best_sid,
+                        pages=processed_new_pages,
+                    )
+                    self.storage.update_session_stats(
+                        user_id=self.user_id,
+                        session_id=best_sid,
+                        stats={
+                            "L_interaction": target_session.get("L_interaction", 0),
+                            "N_visit": target_session.get("N_visit", 0),
+                            "R_recency": target_session.get("R_recency", 1.0),
+                            "H_segment": target_session.get("H_segment", 0.0),
+                            "last_visit_time": target_session.get("last_visit_time"),
+                            "access_count_lfu": target_session.get("access_count_lfu", 0),
+                        },
+                    )
+                except Exception as e:
+                    print(f"MidTermMemory: Error updating storage for session {best_sid}: {e}")
+            else:
+                self.save()
             return best_sid
         else:
             print(f"MidTermMemory: No suitable session to merge (best score {best_overall_score:.2f} < threshold {similarity_threshold}). Creating new session.")
             return self.add_session(summary_for_new_pages, pages_to_insert, keywords_for_new_pages)
 
-    def search_sessions(self, query_text, segment_similarity_threshold=0.1, page_similarity_threshold=0.1, 
-                          top_k_sessions=5, keyword_alpha=1.0, recency_tau_search=3600):
-        if not self.sessions:
-            return []
-
+    def search_sessions(
+        self,
+        query_text,
+        segment_similarity_threshold: float = 0.1,
+        page_similarity_threshold: float = 0.1,
+        top_k_sessions: int = 5,
+        keyword_alpha: float = 1.0,
+        recency_tau_search: float = 3600,
+    ):
+        """
+        如果配置了存储后端（如 SupabaseStore），则优先委托给 storage.search_sessions_by_embedding；
+        否则保留原有的本地 FAISS 检索逻辑。
+        """
+        # 先统一生成 query 向量
         query_vec = get_embedding(
             query_text,
             model_name=self.embedding_model_name,
             **self.embedding_model_kwargs
         )
         query_vec = normalize_vector(query_vec)
+
+        # --- 优先走存储后端 ---
+        if self.storage is not None and self.user_id is not None:
+            try:
+                results = self.storage.search_sessions_by_embedding(
+                    user_id=self.user_id,
+                    query_embedding=query_vec,
+                    segment_similarity_threshold=segment_similarity_threshold,
+                    page_similarity_threshold=page_similarity_threshold,
+                    top_k_sessions=top_k_sessions,
+                    keyword_alpha=keyword_alpha,
+                    query_keywords=[],
+                )
+
+                # 本地更新访问统计和热度
+                current_time_str = get_timestamp()
+                for item in results:
+                    sid = item.get("session_id")
+                    if sid and sid in self.sessions:
+                        session = self.sessions[sid]
+                        session["N_visit"] = session.get("N_visit", 0) + 1
+                        session["last_visit_time"] = current_time_str
+                        session["access_count_lfu"] = session.get("access_count_lfu", 0) + 1
+                        self.access_frequency[sid] = session["access_count_lfu"]
+                        session["H_segment"] = compute_segment_heat(session)
+
+                        # 将统计同步回存储
+                        try:
+                            self.storage.update_session_stats(
+                                user_id=self.user_id,
+                                session_id=sid,
+                                stats={
+                                    "N_visit": session["N_visit"],
+                                    "L_interaction": session.get("L_interaction", 0),
+                                    "R_recency": session.get("R_recency", 1.0),
+                                    "H_segment": session["H_segment"],
+                                    "last_visit_time": session["last_visit_time"],
+                                    "access_count_lfu": session["access_count_lfu"],
+                                },
+                            )
+                        except Exception as e:
+                            print(f"MidTermMemory: Error updating stats for session {sid} in storage: {e}")
+
+                self.rebuild_heap()
+                return results
+            except Exception as e:
+                print(f"MidTermMemory: Error searching via storage, fallback to local search. Error: {e}")
+
+        # --- 本地 FAISS 检索（兼容原有逻辑） ---
+        if not self.sessions:
+            return []
+
         query_keywords = set()  # Keywords extraction removed, relying on semantic similarity
 
-        candidate_sessions = []
         session_ids = list(self.sessions.keys())
-        if not session_ids: return []
+        if not session_ids:
+            return []
 
         summary_embeddings_list = [self.sessions[s]["summary_embedding"] for s in session_ids]
         summary_embeddings_np = np.array(summary_embeddings_list, dtype=np.float32)
@@ -301,7 +429,8 @@ class MidTermMemory:
         current_time_str = get_timestamp()
 
         for i, idx in enumerate(indices[0]):
-            if idx == -1: continue
+            if idx == -1:
+                continue
             
             session_id = session_ids[idx]
             session = self.sessions[session_id]
@@ -313,7 +442,8 @@ class MidTermMemory:
             if query_keywords and session_keywords:
                 intersection = len(query_keywords.intersection(session_keywords))
                 union = len(query_keywords.union(session_keywords))
-                if union > 0: s_topic_keywords = intersection / union
+                if union > 0:
+                    s_topic_keywords = intersection / union
             
             # Time decay for session recency in search scoring
             # time_decay_factor = compute_time_decay(session["timestamp"], current_time_str, tau_hours=recency_tau_search)
@@ -325,10 +455,8 @@ class MidTermMemory:
                 matched_pages_in_session = []
                 for page in session.get("details", []):
                     page_embedding = np.array(page["page_embedding"], dtype=np.float32)
-                    # page_keywords = set(page.get("page_keywords", []))
                     
                     page_sim_score = float(np.dot(page_embedding, query_vec))
-                    # Can also add keyword sim for pages if needed, but keeping it simpler for now
 
                     if page_sim_score >= page_similarity_threshold:
                         matched_pages_in_session.append({"page_data": page, "score": page_sim_score})
@@ -352,19 +480,28 @@ class MidTermMemory:
         self.save() # Save changes from access updates
         # Sort final results by session_relevance_score
         return sorted(results, key=lambda x: x["session_relevance_score"], reverse=True)
-
     def save(self):
-        # Make a copy for saving to avoid modifying heap during iteration if it happens
-        # Though current heap is list of tuples, so direct modification risk is low
-        # sessions_to_save = {sid: data for sid, data in self.sessions.items()}
+        """
+        持久化当前 sessions 状态：
+        - 如果配置了 storage，则调用 save_session_batch；
+        - 否则回退到本地 JSON 文件写入。
+        """
+        if self.storage is not None and self.user_id is not None:
+            try:
+                self.storage.save_session_batch(
+                    user_id=self.user_id,
+                    sessions=self.sessions.values(),
+                )
+            except Exception as e:
+                print(f"MidTermMemory: Error saving sessions to storage: {e}")
+            return
+
+        # 本地 JSON 模式
         data_to_save = {
             "sessions": self.sessions,
             "access_frequency": dict(self.access_frequency), # Convert defaultdict to dict for JSON
-            # Heap is derived, no need to save typically, but can if desired for faster load
-            # "heap_snapshot": self.heap 
         }
         try:
-            # 确保目录存在（防止目录被删除或路径变更的情况）
             ensure_directory_exists(self.file_path)
             with open(self.file_path, "w", encoding="utf-8") as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
@@ -372,6 +509,35 @@ class MidTermMemory:
             print(f"Error saving MidTermMemory to {self.file_path}: {e}")
 
     def load(self):
+        """
+        从存储加载 sessions：
+        - 如果配置了 storage，则调用 load_sessions_meta；
+        - 否则回退到本地 JSON 文件读取。
+        """
+        if self.storage is not None and self.user_id is not None:
+            try:
+                meta = self.storage.load_sessions_meta(self.user_id)
+                self.sessions = dict(meta)
+                # Supabase 等外部存储的 meta 可能不包含 pages 明细；下游流程会访问 session["details"]
+                # 这里先补默认值，避免 KeyError；如需完整 pages，可在后续按 session_id 再取 pages 表
+                for _sid, _s in self.sessions.items():
+                    if isinstance(_s, dict):
+                        _s.setdefault("details", [])
+                # 从 meta 中恢复 access_frequency
+                self.access_frequency = defaultdict(
+                    int,
+                    {
+                        sid: s.get("access_count_lfu", 0)
+                        for sid, s in self.sessions.items()
+                    },
+                )
+                self.rebuild_heap()
+                print(f"MidTermMemory: Loaded from storage for user {self.user_id}. Sessions: {len(self.sessions)}.")
+                return
+            except Exception as e:
+                print(f"MidTermMemory: Error loading from storage, fallback to local file. Error: {e}")
+
+        # 本地 JSON 模式
         try:
             with open(self.file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -384,4 +550,4 @@ class MidTermMemory:
         except json.JSONDecodeError:
             print(f"MidTermMemory: Error decoding JSON from {self.file_path}. Initializing new memory.")
         except Exception as e:
-            print(f"MidTermMemory: An unexpected error occurred during load from {self.file_path}: {e}. Initializing new memory.") 
+            print(f"MidTermMemory: An unexpected error occurred during load from {self.file_path}: {e}. Initializing new memory.")
