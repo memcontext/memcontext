@@ -1,14 +1,17 @@
-from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Depends
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Depends, Body, Header, Security
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
 from starlette.middleware.sessions import SessionMiddleware
 import sys
 import os
+from typing import Tuple
 from concurrent.futures import ThreadPoolExecutor
 import json
 import shutil
 import tempfile
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 import secrets
 from werkzeug.utils import secure_filename
@@ -21,6 +24,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+
+from supabase import create_client, Client
+
 # 加载 .env 文件中的环境变量
 # load_dotenv 会自动从当前目录和父目录向上查找 .env 文件
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
@@ -90,6 +96,21 @@ class ConversationItem(BaseModel):
 class ImportConversationsRequest(BaseModel):
     conversations: List[ConversationItem]
 
+class GenerateKeyRequest(BaseModel): # 生成用户 API Key 请求
+    """创建 API Key 的请求模型"""
+    user_id: Optional[str] = None
+    Project_Name: Optional[str] = None
+    Expires_At: Optional[str] = "Never"
+
+class APIKeyResponse(BaseModel): # 生成用户 API Key 响应
+    """API Key 响应模型"""
+    id: int
+    user_id: Optional[str] = None
+    Project_Name: str
+    User_API_Key: str
+    Created_At: Optional[datetime] = None
+    message: str = "请妥善保管您的 Key，它将不会再次完整显示。"
+
 
 # ========================
 # 1. 创建 Limiter 实例（从配置文件读取 Redis URI）
@@ -121,6 +142,23 @@ else:
 # Global memcontext instance (in production, you'd use proper session management)
 memory_systems = {}
 
+user_keys_table = GLOBAL_CONFIG.get("user_keys_table", "User_API_Keys_manager") # 用户 API Key 管理表
+
+def get_supabase_client():
+    """初始化 Supabase 客户端用于 API keys 管理"""
+    global supabase_client
+    supa_cfg = GLOBAL_CONFIG.get("supabase", {}) or {}
+    supa_url = supa_cfg.get("url")
+    supa_key = supa_cfg.get("service_key")
+    
+    try:
+        supabase_client = create_client(supa_url, supa_key)
+        return supabase_client
+    except Exception as e:
+        print(f"Warning: Failed to initialize Supabase client for API keys: {e}")
+        supabase_client = None
+        return None
+
 # ========================
 # 限流辅助函数
 # ========================
@@ -135,6 +173,178 @@ def get_rate_limit(route_path: str) -> str:
         限流规则字符串，例如 '60/minute'
     """
     return rate_limit_config.get_route_limit(route_path)
+
+def generate_prefixed_key(prefix="sk_mem_"):
+    """
+    生成新的api_key并返回，默认前缀为 "sk_mem_"
+    """
+    random_part = secrets.token_urlsafe(36)
+    api_key = f"{prefix}{random_part}"
+    return api_key
+
+def vaildation_api_key(api_key: str, supabase: Client) -> Tuple[bool, str]:
+    """
+    校验 API Key 是否存在且未过期
+    
+    Args:
+        api_key: 要校验的 API Key
+        supabase: Supabase 客户端
+    
+    Returns:
+        tuple[bool, str]: (Is_Valid, Message)
+    """
+    try:
+        # 查询数据库中的 API Key
+        response = supabase.table("api_keys_management").select("*").eq("User_API_Key", api_key).execute()
+        
+        # 检查是否存在
+        if not response.data or len(response.data) == 0:
+            return False, "API Key 不存在"
+        
+        key_data = response.data[0]
+        expires_at = key_data.get("Expires At", "Never")
+        
+        # 检查过期时间：如果为 "Never" 则通过，如果为空或无效则不通过
+        # Key 只有永久有效和删除后无效两种情况，不需要判断具体时间
+        if expires_at == "Never":
+            # 永久有效，直接通过
+            pass
+        elif not expires_at or expires_at == "" or expires_at is None:
+            # 为空或无效，不通过
+            return False, "API Key 无效：过期时间字段为空或无效"
+
+        # 更新最后使用时间
+        try:
+            current_time = datetime.now().time().isoformat()
+            supabase.table("api_keys_management").update({
+                "Last Used": current_time
+            }).eq("User_API_Key", api_key).execute()
+        except:
+            # 更新失败不影响验证结果
+            pass
+        
+        return True, "API Key 有效"
+        
+    except Exception as e:
+        return False, f"校验过程中发生错误: {str(e)}"
+
+# 定义 HTTPBearer 实例，它会自动检查 Authorization: Bearer <token> 头
+security_scheme = HTTPBearer()
+
+async def verify_api_key(
+    credentials: HTTPAuthorizationCredentials = Security(security_scheme),
+    supabase: Client = Depends(get_supabase_client)
+):
+    """
+    这是一个依赖注入函数 (Dependency)。
+    1. 它会自动从请求头中提取 Authorization: Bearer sk_mem_xxx
+    2. 调用 vaildation_api_key 进行校验
+    3. 如果校验通过，返回 Key 的详细信息（包含 user_id）
+    4. 如果校验失败，直接抛出 403 异常，阻断请求后续业务代码的执行
+    """
+    token = credentials.credentials
+    
+    # vaildation_api_key 会更新 Last Used 字段，这是为了记录 Key 的最后使用时间
+    is_valid, message = vaildation_api_key(token, supabase)
+    
+    if not is_valid:
+        # 校验失败，直接抛出异常，不再执行后续业务代码
+        raise HTTPException(
+            status_code=403,
+            detail=f"鉴权失败: {message}"
+        )
+    
+    # 返回该 Key 对应的完整数据
+    try:
+        response = supabase.table(user_keys_table).select("*").eq("User_API_Key", token).execute()
+        if response.data:
+            return response.data[0] # 返回字典，包含 user_id, Project_Name 等
+    except Exception as e:
+        print(f"Error fetching key details: {e}")
+    
+    # 如果查不到详情但校验通过了，只返回 token
+    return {"User_API_Key": token}
+
+@app.post("/api/generate-api-key", response_model=APIKeyResponse)
+async def generate_api_key(
+    request: GenerateKeyRequest,
+    supabase: Client = Depends(get_supabase_client)
+):
+    """
+    根据用户请求生成 API Key
+    
+    Args:
+        request: 包含 user_id 和 Project_Name 的请求体
+        supabase: Supabase 客户端依赖注入
+    
+    Returns:
+        APIKeyResponse: 生成的 API Key 信息
+    """  
+    try:
+        # 生成新的 API Key
+        api_key = generate_prefixed_key(prefix="sk_mem_")
+        
+        # 准备插入数据库的数据
+        # 注意：Supabase 表字段名包含空格，需要使用字典格式
+        insert_data = {
+            "user_id": request.user_id,
+            "Project_Name": request.Project_Name,
+            "User_API_Key": api_key,
+            "Expires At": request.Expires_At or "Never",
+            "Created At": datetime.now().isoformat(),
+            "Last Used": None
+        }
+        
+        # 插入到 Supabase
+        response = supabase.table(user_keys_table).insert(insert_data).execute()
+        
+        if not response.data:
+            raise HTTPException(status_code=500, detail="创建 API Key 失败")
+        
+        # 转换响应数据（处理字段名中的空格）
+        result_data = response.data[0]
+        
+        # 处理 Created At 字段
+        created_at = None
+        if result_data.get("Created At"):
+            created_at_str = result_data.get("Created At")
+            if isinstance(created_at_str, str):
+                # 处理 ISO 格式字符串
+                created_at_str = created_at_str.replace("Z", "+00:00")
+                try:
+                    created_at = datetime.fromisoformat(created_at_str)
+                except:
+                    created_at = datetime.now()
+            elif isinstance(created_at_str, datetime):
+                created_at = created_at_str
+        
+        # 处理 Last Used 字段
+        last_used = None
+        if result_data.get("Last Used"):
+            last_used_value = result_data.get("Last Used")
+            if isinstance(last_used_value, str):
+                try:
+                    last_used = time.fromisoformat(last_used_value)
+                except:
+                    pass
+            elif isinstance(last_used_value, time):
+                last_used = last_used_value
+        
+        api_key_response = APIKeyResponse(
+            id=result_data.get("id"),
+            user_id=result_data.get("user_id"),
+            Project_Name=result_data.get("Project_Name"),
+            User_API_Key=result_data.get("User_API_Key"),
+            Expires_At=result_data.get("Expires At", "Never"),
+            Created_At=created_at,
+            Last_Used=last_used
+        )
+        
+        return api_key_response
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"生成 API Key 时发生错误: {str(e)}")
+
 
 @app.get('/', response_class=HTMLResponse)
 async def index(request: Request):

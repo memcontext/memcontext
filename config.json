@@ -28,6 +28,7 @@
     "ltm_user_profiles_table": "long_term_user_profiles",
     "ltm_user_knowledge_table": "long_term_user_knowledge",
     "ltm_assistant_knowledge_table": "long_term_assistant_knowledge",
+    "user_keys_table": "User_API_Keys_manager",
     "postgres_host": "postgres_host",
     "postgres_port": 5432,
     "postgres_db": "postgres",
