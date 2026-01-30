@@ -373,15 +373,9 @@ class Memcontext:
         """ 
         Legacy synchronous method (kept for compatibility).
         Now calls sync part then async part.
-        短期记忆写入后触发的分析若失败，仅打日志不向上抛，避免聊天接口 500（问答已落库）。
         """
         self.add_short_term_memory_sync(user_input, agent_response, timestamp, meta_data)
-        try:
-            self.trigger_long_term_analysis_async()
-        except Exception as e:
-            import traceback
-            print(f"Memcontext: trigger_long_term_analysis_async failed (non-fatal, response already stored): {e}")
-            traceback.print_exc()
+        self.trigger_long_term_analysis_async()
 
     def add_short_term_memory_sync(self, user_input: str, agent_response: str, timestamp: str = None, meta_data: dict = None):
         """

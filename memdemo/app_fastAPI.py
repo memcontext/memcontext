@@ -90,6 +90,21 @@ class ConversationItem(BaseModel):
 class ImportConversationsRequest(BaseModel):
     conversations: List[ConversationItem]
 
+class retrieve_memory_request(BaseModel):
+    query: str
+    relationship_with_user: str = "friend"
+    style_hint: str = ""
+    max_results: int = 10
+
+class get_user_profile_request(BaseModel):
+    include_knowledge: bool = True
+    include_assistant_knowledge: bool = False
+
+class add_memory_request(BaseModel):
+    user_input: str
+    agent_response: str 
+    timestamp: Optional[str] = None 
+    meta_data: Optional[Dict[str, Any]] = None
 
 # ========================
 # 1. 创建 Limiter 实例（从配置文件读取 Redis URI）
@@ -323,6 +338,200 @@ async def chat(data: ChatRequest, request: Request):
                 'traceback': error_trace
             }
         )
+
+
+
+@app.post('/add_memory')
+@limiter.limit(get_rate_limit('/add_memory'))
+async def add_memory(data: add_memory_request, request: Request):
+    """
+    向记忆系统添加一条新记忆（用户输入 + 助手回应）。
+    需先调用 POST /init_memory 建立会话；记忆写入当前会话对应的用户。
+    若 init_memory 时配置了 Supabase（storage），则写入数据库 short_term 表；否则写入本地 JSON。
+    """
+    session_id = request.session.get('memory_session_id')
+    if not session_id or session_id not in memory_systems:
+        raise HTTPException(status_code=400, detail='Memory system not initialized. Call POST /init_memory first.')
+
+    user_input = (data.user_input or '').strip()
+    agent_response = (data.agent_response or '').strip()
+    if not user_input or not agent_response:
+        raise HTTPException(status_code=400, detail='user_input and agent_response are required and non-empty.')
+
+    memory_system = memory_systems[session_id]
+    timestamp = data.timestamp or get_timestamp()
+    meta_data = data.meta_data or {}
+
+    try:
+        await asyncio.to_thread(
+            memory_system.add_memory,
+            user_input=user_input,
+            agent_response=agent_response,
+            timestamp=timestamp,
+            meta_data=meta_data,
+        )
+        return {
+            "status": "success",
+            "message": "Memory has been added (to DB when Supabase is configured, else local JSON).",
+            "timestamp": timestamp,
+            "details": {
+                "user_input_length": len(user_input),
+                "agent_response_length": len(agent_response),
+                "has_meta_data": bool(meta_data),
+            },
+        }
+    except Exception as e:
+        import traceback
+        print(f"add_memory error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error adding memory: {str(e)}")
+
+def _retrieve_memory_sync(memory_system, query: str, max_results: int) -> Dict[str, Any]:
+    """同步执行检索与组装结果，供 asyncio.to_thread 调用，避免阻塞事件循环。"""
+    retrieval_results = memory_system.retriever.retrieve_context(
+        user_query=query,
+        user_id=memory_system.user_id
+    )
+    short_term_history = memory_system.short_term_memory.get_all()
+    try:
+        user_profile = memory_system.get_user_profile_summary()
+    except Exception:
+        user_profile = "No detailed user profile"
+    if not user_profile or str(user_profile).strip().lower() == "none":
+        user_profile = "No detailed user profile"
+    pages = retrieval_results.get("retrieved_pages") or []
+    user_knowledge = retrieval_results.get("retrieved_user_knowledge") or []
+    assistant_knowledge = retrieval_results.get("retrieved_assistant_knowledge") or []
+    return {
+        "query": query,
+        "timestamp": get_timestamp(),
+        "user_profile": user_profile,
+        "short_term_memory": short_term_history,
+        "short_term_count": len(short_term_history),
+        "retrieved_pages": [
+            {
+                "user_input": p.get("user_input", ""),
+                "agent_response": p.get("agent_response", ""),
+                "timestamp": p.get("timestamp", ""),
+                "meta_info": p.get("meta_info"),
+            }
+            for p in pages[:max_results]
+        ],
+        "retrieved_user_knowledge": [
+            {"knowledge": k.get("knowledge", ""), "timestamp": k.get("timestamp", "")}
+            for k in user_knowledge[:max_results]
+        ],
+        "retrieved_assistant_knowledge": [
+            {"knowledge": k.get("knowledge", ""), "timestamp": k.get("timestamp", "")}
+            for k in assistant_knowledge[:max_results]
+        ],
+        "total_pages_found": len(pages),
+        "total_user_knowledge_found": len(user_knowledge),
+        "total_assistant_knowledge_found": len(assistant_knowledge),
+    }
+
+
+@app.post('/retrieve_memory')
+@limiter.limit(get_rate_limit('/retrieve_memory'))
+async def retrieve_memory(data: retrieve_memory_request, request: Request) -> Dict[str, Any]:
+    """
+    根据查询从 Memory 检索相关记忆与上下文（短期/中期/长期），异步执行不阻塞。
+    请求体: query, relationship_with_user, style_hint, max_results。
+    返回: success, data（含 short_term_memory, retrieved_pages, retrieved_user_knowledge, retrieved_assistant_knowledge 等）。
+    """
+    session_id = request.session.get('memory_session_id')
+    if not session_id or session_id not in memory_systems:
+        raise HTTPException(status_code=400, detail='Memory system not initialized. Call POST /init_memory first.')
+    query = (data.query or '').strip()
+    if not query:
+        raise HTTPException(status_code=400, detail='query is required and non-empty.')
+    max_results = max(1, min((data.max_results or 10), 100))
+    memory_system = memory_systems[session_id]
+    try:
+        result_data = await asyncio.to_thread(
+            _retrieve_memory_sync,
+            memory_system,
+            query,
+            max_results,
+        )
+        return {"success": True, "data": result_data}
+    except Exception as e:
+        import traceback
+        print(f"retrieve_memory error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving memory: {str(e)}")
+
+@app.post('/get_user_profile')
+@limiter.limit(get_rate_limit('/chat'))
+async def get_user_profile(data: get_user_profile_request, request: Request) -> Dict[str, Any]:
+    """
+    获取用户的画像信息，包括个性特征、偏好和相关知识
+    
+    Args:
+        include_knowledge: 是否包括用户相关的知识条目
+        include_assistant_knowledge: 是否包括助手知识库
+    
+    Returns:
+        包含用户画像信息的字典
+    """
+    session_id = request.session.get('memory_session_id')
+    if not session_id or session_id not in memory_systems:
+        raise HTTPException(status_code=400, detail='Memory system not initialized. Call POST /init_memory first.')
+    
+    include_knowledge = data.include_knowledge
+    include_assistant_knowledge = data.include_assistant_knowledge
+
+
+    memory_system = memory_systems[session_id]
+    
+    try:
+        # 获取用户画像
+        user_profile = await asyncio.to_thread(
+            memory_system.get_user_profile_summary
+        )
+        
+        
+        result = {
+            "status": "success",
+            "timestamp": get_timestamp(),
+            "user_id": memory_system.user_id,
+            "assistant_id": memory_system.assistant_id,
+            "user_profile": user_profile if user_profile and user_profile.lower() != "none" else "No detailed user profile"
+        }
+        
+        if include_knowledge:
+            user_knowledge = await asyncio.to_thread(
+            memory_system.user_long_term_memory.get_user_knowledge
+        )
+            result["user_knowledge"] = [
+                {
+                    "knowledge": item["knowledge"],
+                    "timestamp": item["timestamp"]
+                }
+                for item in user_knowledge
+            ]
+            result["user_knowledge_count"] = len(user_knowledge)
+        
+        if include_assistant_knowledge:
+            assistant_knowledge = await asyncio.to_thread(
+            memory_system.user_long_term_memory.get_assistant_knowledge_summary
+        )
+            assistant_knowledge = memory_system.get_assistant_knowledge_summary()
+            result["assistant_knowledge"] = [
+                {
+                    "knowledge": item["knowledge"],
+                    "timestamp": item["timestamp"]
+                }
+                for item in assistant_knowledge
+            ]
+            result["assistant_knowledge_count"] = len(assistant_knowledge)
+        
+        return {"success": True, "data": result}
+        
+    except Exception as e:
+        import traceback
+        print(f"retrieve_memory error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error get user profile: {str(e)}")
+
+
 
 @app.post('/import_from_cache')
 @limiter.limit(get_rate_limit('/import_from_cache'))
@@ -774,6 +983,10 @@ async def get_memory_state(request: Request):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
 
 @app.post('/trigger_analysis')
 @limiter.limit(get_rate_limit('/trigger_analysis'))

@@ -52,7 +52,10 @@ class RateLimitConfig:
         
         # 聊天接口 - 允许较频繁的请求
         '/chat': '10/minute',
-        
+
+        # 直接添加记忆（写入短期记忆；若配置了 Supabase 则写入 DB short_term 表）
+        '/add_memory': '30/minute',
+
         # 文件上传接口 - 限制较严格，防止资源滥用
         '/add_multimodal_memory': '30/hour',
         '/add_multimodal_memory_stream': '30/hour',
@@ -61,6 +64,9 @@ class RateLimitConfig:
         '/import_from_cache': '30/hour',
         '/import_conversations': '30/hour',
         
+        # 检索记忆接口
+        '/retrieve_memory': '60/minute',
+
         # 查询接口 - 允许较频繁的查询
         '/memory_state': '120/minute',  # 前端会频繁轮询
         
