@@ -78,15 +78,15 @@ class Retriever:
         print(f"Retriever: Long-term user knowledge recalled {len(retrieved_knowledge)} items.")
         return retrieved_knowledge
 
-    def _retrieve_assistant_knowledge(self, user_query, knowledge_threshold, top_k_knowledge):
-        """并行任务：从助手长期知识检索"""
+    def _retrieve_assistant_knowledge(self, user_query, knowledge_threshold, top_k_knowledge, user_id: Optional[str] = None):
+        """并行任务：从助手长期知识检索；user_id 用于按用户过滤助手知识。"""
         if not self.assistant_long_term_memory:
             print("Retriever: No assistant long-term memory provided, skipping assistant knowledge retrieval.")
             return []
-        
+
         print("Retriever: Searching assistant long-term knowledge...")
         retrieved_knowledge = self.assistant_long_term_memory.search_assistant_knowledge(
-            user_query, threshold=knowledge_threshold, top_k=top_k_knowledge
+            user_query, threshold=knowledge_threshold, top_k=top_k_knowledge, user_id=user_id
         )
         print(f"Retriever: Long-term assistant knowledge recalled {len(retrieved_knowledge)} items.")
         return retrieved_knowledge
@@ -101,11 +101,11 @@ class Retriever:
                          ):
         print(f"Retriever: Starting PARALLEL retrieval for query: '{user_query[:50]}...'")
         
-        # 并行执行三个检索任务
+        # 并行执行三个检索任务（助手知识按 user_id 过滤）
         tasks = [
             lambda: self._retrieve_mid_term_context(user_query, segment_similarity_threshold, page_similarity_threshold, top_k_sessions),
             lambda: self._retrieve_user_knowledge(user_query, knowledge_threshold, top_k_knowledge),
-            lambda: self._retrieve_assistant_knowledge(user_query, knowledge_threshold, top_k_knowledge)
+            lambda: self._retrieve_assistant_knowledge(user_query, knowledge_threshold, top_k_knowledge, user_id=user_id)
         ]
         
         # 使用并行处理
