@@ -157,7 +157,12 @@ class Memcontext:
         ensure_directory_exists(assistant_long_term_path)
 
         # Initialize Memory Modules for User
-        self.short_term_memory = ShortTermMemory(file_path=user_short_term_path, max_capacity=short_term_capacity)
+        self.short_term_memory = ShortTermMemory(
+            file_path=user_short_term_path,
+            max_capacity=short_term_capacity,
+            storage=self.storage,
+            user_id=self.user_id,
+        )
         self.mid_term_memory = MidTermMemory(
             file_path=user_mid_term_path, 
             client=self.client, 
@@ -244,11 +249,11 @@ class Memcontext:
                         self.user_long_term_memory.add_user_knowledge(line.strip())
                         print(f"Memorycontext: Added user knowledge: {line.strip()[:50]}...")
             
-            # 存储 Assistant Knowledge
+            # 存储 Assistant Knowledge（按 user_id 区分不同用户的助手知识）
             if new_assistant_knowledge and new_assistant_knowledge.lower() != "none":
                 for line in new_assistant_knowledge.split('\n'):
                     if line.strip() and line.strip().lower() not in ["none", "- none", "- none."]:
-                        self.assistant_long_term_memory.add_assistant_knowledge(line.strip())
+                        self.assistant_long_term_memory.add_assistant_knowledge(line.strip(), user_id=self.user_id)
                         print(f"Memorycontext: Added assistant knowledge: {line.strip()[:50]}...")
             
             print("Memorycontext: Knowledge extraction completed.")
@@ -338,11 +343,11 @@ class Memcontext:
                          if line.strip() and line.strip().lower() not in ["none", "- none", "- none."]:
                             self.user_long_term_memory.add_user_knowledge(line.strip())
 # NOTE
-                # Add Assistant Knowledge to assistant's LTM
+                # Add Assistant Knowledge to assistant's LTM（按 user_id 区分不同用户的助手知识）
                 if new_assistant_knowledge and new_assistant_knowledge.lower() != "none":
                     for line in new_assistant_knowledge.split('\n'):
                         if line.strip() and line.strip().lower() not in ["none", "- none", "- none."]:
-                           self.assistant_long_term_memory.add_assistant_knowledge(line.strip()) # Save to dedicated assistant LTM
+                            self.assistant_long_term_memory.add_assistant_knowledge(line.strip(), user_id=self.user_id)
 
                 # Mark pages as analyzed and reset session heat contributors
                 for p in session["details"]:
@@ -368,9 +373,15 @@ class Memcontext:
         """ 
         Legacy synchronous method (kept for compatibility).
         Now calls sync part then async part.
+        短期记忆写入后触发的分析若失败，仅打日志不向上抛，避免聊天接口 500（问答已落库）。
         """
         self.add_short_term_memory_sync(user_input, agent_response, timestamp, meta_data)
-        self.trigger_long_term_analysis_async()
+        try:
+            self.trigger_long_term_analysis_async()
+        except Exception as e:
+            import traceback
+            print(f"Memcontext: trigger_long_term_analysis_async failed (non-fatal, response already stored): {e}")
+            traceback.print_exc()
 
     def add_short_term_memory_sync(self, user_input: str, agent_response: str, timestamp: str = None, meta_data: dict = None):
         """
@@ -1782,7 +1793,7 @@ class Memcontext:
         return self.user_long_term_memory.get_raw_user_profile(self.user_id)
 
     def get_assistant_knowledge_summary(self) -> list:
-        return self.assistant_long_term_memory.get_assistant_knowledge()
+        return self.assistant_long_term_memory.get_assistant_knowledge(user_id=self.user_id)
 
     def force_mid_term_analysis(self):
         """Forces analysis of all unanalyzed pages in the hottest mid-term segment if heat is above 0.

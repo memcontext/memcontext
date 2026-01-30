@@ -473,7 +473,7 @@ def get_memory_state():
         
         user_profile = memory_system.user_long_term_memory.get_raw_user_profile(memory_system.user_id)
         user_knowledge = memory_system.user_long_term_memory.get_user_knowledge()
-        assistant_knowledge = memory_system.assistant_long_term_memory.get_assistant_knowledge()
+        assistant_knowledge = memory_system.assistant_long_term_memory.get_assistant_knowledge(user_id=memory_system.user_id)
         
         return jsonify({
             'short_term': {'current_count': len(short_term), 'memories': short_term},

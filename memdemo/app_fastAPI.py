@@ -243,18 +243,18 @@ async def init_memory(data: InitMemoryRequest, request: Request):
             user_id=user_id,
             openai_api_key=api_key,
             openai_base_url=base_url,
-            data_storage_path=data_path,
             assistant_id=assistant_id,
-            short_term_capacity=GLOBAL_CONFIG.get('short_term_capacity', 7),
-            mid_term_capacity=GLOBAL_CONFIG.get('mid_term_capacity', 200),
-            long_term_knowledge_capacity=GLOBAL_CONFIG.get('long_term_knowledge_capacity', 1000),
-            mid_term_heat_threshold=GLOBAL_CONFIG.get('mid_term_heat_threshold', 10.0),
-            embedding_model_name=embedding_model,
-            embedding_model_kwargs={'api_key': embedding_api_key, 'base_url': embedding_base_url},
+            short_term_capacity=GLOBAL_CONFIG.get("short_term_capacity", 7),
+            mid_term_capacity=GLOBAL_CONFIG.get("mid_term_capacity", 200),
+            long_term_knowledge_capacity=GLOBAL_CONFIG.get("long_term_knowledge_capacity", 100),
+            data_storage_path=data_path,
+            mid_term_heat_threshold=GLOBAL_CONFIG.get("mid_term_heat_threshold", 7.0),
             llm_model=model,
+            embedding_model_name=GLOBAL_CONFIG.get("embedding_model_name", "all-MiniLM-L6-v2"),
+            embedding_model_kwargs={"api_key":embedding_api_key, "base_url":embedding_base_url},
             file_storage_base_path=file_storage_base_path,
-            openai_api_urls_keys=api_urls_keys if api_urls_keys else None,  # 传入负载均衡配置
-            storage=supa_store,  # 使用 Supabase 存储（若已配置且表已建好）
+            openai_api_urls_keys=api_urls_keys,
+            storage=supa_store,
         )
         
         session_id = secrets.token_hex(8)
@@ -263,16 +263,12 @@ async def init_memory(data: InitMemoryRequest, request: Request):
         request.session['memory_session_id'] = session_id
         # 将配置存入session（包括负载均衡配置）
         memory_config = {
-            'api_key': api_key,
-            'base_url': base_url,
-            'model': model,
-            'embedding_provider': 'doubao',
-            'api_urls_keys': api_urls_keys,  # 保存负载均衡配置
-            'embedding_api_key': embedding_api_key,
-            'embedding_base_url': embedding_base_url,
-            'embedding_model': embedding_model,
+            'user_id': user_id,
+            'api_urls_keys': api_urls_keys,
+            'data_path': data_path,
             'assistant_id': assistant_id,
-            'data_path': data_path
+            'model': model,
+            'raw_config': GLOBAL_CONFIG 
         }
         request.session['memory_config'] = memory_config
         
@@ -283,7 +279,7 @@ async def init_memory(data: InitMemoryRequest, request: Request):
             'assistant_id': assistant_id,
             'model': model,
             'base_url': base_url,
-            'embedding_provider': memory_config['embedding_provider']
+            #'embedding_provider': memory_config['embedding_provider']
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -960,39 +956,76 @@ async def clear_memory(request: Request):
             await asyncio.to_thread(shutil.rmtree, assistant_data_dir)
         
         # 从session中获取配置来重新初始化
-        config = request.session.get('memory_config')
+        sess_cfg = request.session.get('memory_config')
+        raw_config = sess_cfg.get('raw_config', GLOBAL_CONFIG)
         if not config:
             raise HTTPException(status_code=400, detail='Configuration not found in session. Please re-initialize.')
+        supa_cfg = raw_config.get("supabase", {}) or {}
+        supa_url = supa_cfg.get("url")
+        supa_key = supa_cfg.get("service_key")
+        supa_schema = supa_cfg.get("schema", "public")
+        supa_sessions_table = supa_cfg.get("mid_sessions_table", "sessions")
+        supa_pages_table = supa_cfg.get("mid_pages_table", "pages")
+        ltm_user_profiles_table = supa_cfg.get("ltm_user_profiles_table", "long_term_user_profiles")
+        ltm_user_knowledge_table = supa_cfg.get("ltm_user_knowledge_table", "long_term_user_knowledge")
+        ltm_assistant_knowledge_table = supa_cfg.get("ltm_assistant_knowledge_table", "long_term_assistant_knowledge")
 
-        api_key = config.get('api_key', '')
-        base_url = config.get('base_url', 'https://ark.cn-beijing.volces.com/api/v3')
-        model = config.get('model', 'doubao-seed-1-6-flash-250828')
-        api_urls_keys = config.get('api_urls_keys', {})  # 获取负载均衡配置
-        embedding_api_key = config.get('embedding_api_key', api_key)
-        embedding_base_url = config.get('embedding_base_url', base_url)
-        embedding_model = config.get('embedding_model', 'doubao-embedding-large-text-250515')
-        assistant_id = config.get('assistant_id', memory_system.assistant_id)
-        data_path = config.get('data_path', memory_system.data_storage_path)
-        
-        user_id = memory_system.user_id
-        
+        # 从 config 读取 Postgres 连接信息
+        postgres_host = supa_cfg.get("postgres_host")
+        postgres_port = supa_cfg.get("postgres_port", 5432)
+        postgres_db = supa_cfg.get("postgres_db", "postgres")
+        postgres_user = supa_cfg.get("postgres_user", "postgres")
+        postgres_password = supa_cfg.get("postgres_password")
+        postgres_connection_string = supa_cfg.get("postgres_connection_string")
+
+        supa_store = None
         # Create new memory system（支持负载均衡）
+        if supa_url and supa_key:
+            try:
+                supa_store = SupabaseStore(
+                    supabase_url=supa_url,
+                    supabase_key=supa_key,
+                    embedding_dim=2048,
+                    schema=supa_schema,
+                    mid_sessions_table=supa_sessions_table,
+                    mid_pages_table=supa_pages_table,
+                    ltm_user_profiles_table=ltm_user_profiles_table,
+                    ltm_user_knowledge_table=ltm_user_knowledge_table,
+                    ltm_assistant_knowledge_table=ltm_assistant_knowledge_table,
+                    auto_create_tables=True,
+                    postgres_connection_string=postgres_connection_string,
+                    postgres_host=postgres_host,
+                    postgres_port=postgres_port,
+                    postgres_db=postgres_db,
+                    postgres_user=postgres_user,
+                    postgres_password=postgres_password,
+                )
+                print(f"SupabaseStore re-initialized for mid-term memory in clear_memory: {supa_url}")
+            except Exception as e:
+                print(f"Warning: Failed to re-initialize SupabaseStore in clear_memory, fallback to local mid_term.json. Error: {e}")
+    
+    
         new_memory_system = Memcontext(
-            user_id=user_id,
-            openai_api_key=api_key,
-            openai_base_url=base_url,
-            data_storage_path=data_path,
-            assistant_id=assistant_id,
-            short_term_capacity=GLOBAL_CONFIG.get('short_term_capacity', 7),
-            mid_term_capacity=GLOBAL_CONFIG.get('mid_term_capacity', 200),
-            long_term_knowledge_capacity=GLOBAL_CONFIG.get('long_term_knowledge_capacity', 100),
-            mid_term_heat_threshold=GLOBAL_CONFIG.get('mid_term_heat_threshold', 5.0),
-            llm_model=model,
-            embedding_model_name=embedding_model,
-            embedding_model_kwargs={'api_key': embedding_api_key, 'base_url': embedding_base_url},
-            openai_api_urls_keys=api_urls_keys if api_urls_keys else None  # 传入负载均衡配置
-        )
+                user_id=memory_system.user_id,
+                openai_api_key=sess_cfg.get('api_key', raw_config.get("openai_api_key", "")),
+                openai_base_url=sess_cfg.get('base_url', raw_config.get("openai_base_url", "https://api.openai.com/v1")),
+                openai_api_urls_keys=sess_cfg.get('openai_api_urls_keys') or GLOBAL_CONFIG.get("openai_api_urls_keys", {}),
+                data_storage_path=sess_cfg.get('data_path', raw_config.get("data_storage_path", "./data")),
+                assistant_id=memory_system.assistant_id,
+                short_term_capacity=raw_config.get("short_term_capacity", 7),
+                mid_term_capacity=raw_config.get("mid_term_capacity", 200),
+                long_term_knowledge_capacity=raw_config.get("long_term_knowledge_capacity", 100),
+                mid_term_heat_threshold=raw_config.get("mid_term_heat_threshold", 7.0),
+                llm_model=sess_cfg.get('model', raw_config.get("llm_model")),
+                embedding_model_name=raw_config.get("embedding_model_name", "all-MiniLM-L6-v2"), 
+                embedding_model_kwargs={
+                    "api_key": raw_config.get("embedding_api_key", ""),
+                    "base_url": raw_config.get("embedding_base_url", "https://ark.cn-beijing.volces.com/api/v3"),
+                },
+                storage=supa_store,
+            )
         
+        memory_systems[session_id] = new_memory_system
         # Replace the old memory system
         memory_systems[session_id] = new_memory_system
         
