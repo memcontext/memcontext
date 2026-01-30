@@ -2,23 +2,36 @@
   "user_id": "test_user_001",
   "llm_model": "doubao-seed-1-6-flash-250828",
   "embedding_model_name": "doubao-embedding-large-text-250515",
-  "openai_api_key": "",
+  "openai_api_key": "85e753e4-8b9d-4f03-b7d6-046111c23ac4",
   "openai_base_url": "https://ark.cn-beijing.volces.com/api/v3",
-  "embedding_api_key": "",
+  "embedding_api_key": "85e753e4-8b9d-4f03-b7d6-046111c23ac4",
   "embedding_base_url": "https://ark.cn-beijing.volces.com/api/v3",
   "data_storage_path": "./memdemo/data",
   "assistant_id": "memcontext_assistant",
-  "short_term_capacity": 7,
+  "short_term_capacity": 5,
   "mid_term_capacity": 2000,
   "long_term_knowledge_capacity": 100,
   "retrieval_queue_capacity": 4,
   "mid_term_heat_threshold": 7.0,
-  "mid_term_similarity_threshold": 0.6,
+  "mid_term_similarity_threshold": 0.7,
   "openai_api_urls_keys":{
     "https://ark.cn-beijing.volces.com/api/v3": [
-      "",
-      "",
-      ""
+      "85e753e4-8b9d-4f03-b7d6-046111c23ac4"
     ]
+  },
+  "supabase": {
+    "url": "http://192.168.22.111:8000",
+    "service_key": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3Njk2NjUyMzgsImV4cCI6MTkyNzM0NTIzOH0.c5n3RMHwTpav72EBS7qGto27c6KDKHmtVPw9kQ9BJO4",
+    "schema": "public",
+    "mid_sessions_table": "sessions",
+    "mid_pages_table": "pages",
+    "ltm_user_profiles_table": "long_term_user_profiles",
+    "ltm_user_knowledge_table": "long_term_user_knowledge",
+    "ltm_assistant_knowledge_table": "long_term_assistant_knowledge",
+    "postgres_host": "postgres_host",
+    "postgres_port": 5432,
+    "postgres_db": "postgres",
+    "postgres_user": "postgres",
+    "postgres_password": "67bf129592dd100f8e1012d848c000b9"
   }
 } 

@@ -4,6 +4,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor
 import json
 import shutil
 import tempfile
@@ -38,6 +39,16 @@ if os.path.exists(config_path):
     except Exception as e:
         print(f"Error loading config.json: {e}")
 
+
+
+
+executor = ThreadPoolExecutor(max_workers=10)
+
+#  Memcontext
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from memcontext import Memcontext
+from memcontext.utils import get_timestamp
+from memcontext.storage import SupabaseStore
 # 导入限流配置
 from rate_limit_config import config as rate_limit_config
 
@@ -144,20 +155,70 @@ async def init_memory(data: InitMemoryRequest, request: Request):
     使用 async def 是为了保持 FastAPI 的一致性，如果将来需要异步操作可以方便扩展
     """
     user_id = data.user_id.strip() if data.user_id else ''
-    
-    # 优先从配置文件读取，如果没有则从环境变量读取
-    api_key = GLOBAL_CONFIG.get('openai_api_key', os.environ.get('LLM_API_KEY', '').strip())
-    base_url = GLOBAL_CONFIG.get('openai_base_url', os.environ.get('LLM_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3').strip())
-    model = GLOBAL_CONFIG.get('llm_model', os.environ.get('LLM_MODEL', 'doubao-seed-1-6-flash-250828').strip())
-    embedding_model = GLOBAL_CONFIG.get('embedding_model_name', os.environ.get('EMBEDDING_MODEL', 'doubao-embedding-large-text-250515').strip())
-    embedding_api_key = GLOBAL_CONFIG.get('embedding_api_key', os.environ.get('EMBEDDING_API_KEY', api_key).strip())
-    embedding_base_url = GLOBAL_CONFIG.get('embedding_base_url', os.environ.get('EMBEDDING_BASE_URL', base_url).strip())
-    
-    # 读取负载均衡配置（多个 API key）
-    api_urls_keys = GLOBAL_CONFIG.get('openai_api_urls_keys', {})
-
     if not user_id:
         raise HTTPException(status_code=400, detail='User ID 是必需的。')
+    # 优先从配置文件读取，如果没有则从环境变量读取
+    assistant_id = GLOBAL_CONFIG.get("assistant_id") or f"assistant_{user_id}"
+    api_key = GLOBAL_CONFIG.get("openai_api_key", "")
+    base_url = GLOBAL_CONFIG.get("openai_base_url", "https://api.openai.com/v1")
+    model = GLOBAL_CONFIG.get("llm_model", "gpt-4o-mini")
+    data_path = GLOBAL_CONFIG.get("data_storage_path", "./data")
+    
+    embedding_api_key = GLOBAL_CONFIG.get("embedding_api_key", "")
+    embedding_base_url = GLOBAL_CONFIG.get("embedding_base_url", "https://ark.cn-beijing.volces.com/api/v3")
+    embedding_model = GLOBAL_CONFIG.get("embedding_model_name", "doubao-embedding-large-text-250515")
+    api_urls_keys = GLOBAL_CONFIG.get("openai_api_urls_keys", {})
+    # 读取负载均衡配置（多个 API key）
+    
+
+    # Supabase 配置
+    supa_cfg = GLOBAL_CONFIG.get("supabase", {}) or {}
+    supa_url = supa_cfg.get("url")
+    supa_key = supa_cfg.get("service_key")
+    supa_schema = supa_cfg.get("schema", "public")
+    supa_sessions_table = supa_cfg.get("mid_sessions_table", "sessions")
+    supa_pages_table = supa_cfg.get("mid_pages_table", "pages")
+    ltm_user_profiles_table = supa_cfg.get("ltm_user_profiles_table", "long_term_user_profiles")
+    ltm_user_knowledge_table = supa_cfg.get("ltm_user_knowledge_table", "long_term_user_knowledge")
+    ltm_assistant_knowledge_table = supa_cfg.get("ltm_assistant_knowledge_table", "long_term_assistant_knowledge")
+
+    supa_store = None
+    if supa_url and supa_key:
+        try:
+            # 从 config 读取 Postgres 连接信息（用于自动建表）
+            postgres_host = supa_cfg.get("postgres_host")
+            postgres_port = supa_cfg.get("postgres_port", 5432)
+            postgres_db = supa_cfg.get("postgres_db", "postgres")
+            postgres_user = supa_cfg.get("postgres_user", "postgres")
+            postgres_password = supa_cfg.get("postgres_password")
+            postgres_connection_string = supa_cfg.get("postgres_connection_string")
+            
+            # embedding_dim 与当前中期记忆 embedding 模型维度保持一致
+            supa_store = SupabaseStore(
+                supabase_url=supa_url,
+                supabase_key=supa_key,
+                embedding_dim=2048,
+                schema=supa_schema,
+                mid_sessions_table=supa_sessions_table,
+                mid_pages_table=supa_pages_table,
+                ltm_user_profiles_table=ltm_user_profiles_table,
+                ltm_user_knowledge_table=ltm_user_knowledge_table,
+                ltm_assistant_knowledge_table=ltm_assistant_knowledge_table,
+                auto_create_tables=True,
+                postgres_connection_string=postgres_connection_string,
+                postgres_host=postgres_host,
+                postgres_port=postgres_port,
+                postgres_db=postgres_db,
+                postgres_user=postgres_user,
+                postgres_password=postgres_password,
+            )
+            print(f"SupabaseStore initialized for mid-term memory: {supa_url}")
+        except Exception as e:
+            print(f"Warning: Failed to initialize SupabaseStore, fallback to local mid_term.json. Error: {e}")
+
+
+
+    
     
     # 如果没有配置负载均衡，则检查单个 API key
     if not api_urls_keys and not api_key:
@@ -167,7 +228,6 @@ async def init_memory(data: InitMemoryRequest, request: Request):
     
     try:
         # Initialize memcontext for this session
-        data_path = './data'
         os.makedirs(data_path, exist_ok=True)
         
         # 获取 file_storage_base_path（可选，默认使用项目根目录）
@@ -193,7 +253,8 @@ async def init_memory(data: InitMemoryRequest, request: Request):
             embedding_model_kwargs={'api_key': embedding_api_key, 'base_url': embedding_base_url},
             llm_model=model,
             file_storage_base_path=file_storage_base_path,
-            openai_api_urls_keys=api_urls_keys if api_urls_keys else None  # 传入负载均衡配置
+            openai_api_urls_keys=api_urls_keys if api_urls_keys else None,  # 传入负载均衡配置
+            storage=supa_store,  # 使用 Supabase 存储（若已配置且表已建好）
         )
         
         session_id = secrets.token_hex(8)

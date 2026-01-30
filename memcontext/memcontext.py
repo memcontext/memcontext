@@ -27,6 +27,7 @@ try:
     from .multimodal import ConverterFactory
     from .multimodal.converter import ConversionChunk, ConversionOutput
     from .multimodal.utils import guess_file_extension, guess_mime_type, compute_file_hash
+    from .storage import MemoryStorage
 except ImportError:
     # 回退到绝对导入（当作为独立模块使用时）
     from utils import (
@@ -47,6 +48,7 @@ except ImportError:
     from multimodal import ConverterFactory
     from multimodal.converter import ConversionChunk, ConversionOutput
     from multimodal.utils import guess_file_extension, guess_mime_type, compute_file_hash
+    from storage import MemoryStorage
 
 # Heat threshold for triggering profile/knowledge update from mid-term memory
 H_PROFILE_UPDATE_THRESHOLD = 5.0 
@@ -71,6 +73,7 @@ class Memcontext:
                  file_storage_manager=None,
                  file_storage_base_path: str = None,
                  openai_api_urls_keys: Dict[str, List[str]] = None,
+                 storage: Optional["MemoryStorage"] = None,
                  ):
         self.user_id = user_id
         self.assistant_id = assistant_id
@@ -79,6 +82,7 @@ class Memcontext:
         self.mid_term_similarity_threshold = mid_term_similarity_threshold
         self.embedding_model_name = embedding_model_name
         self.multimodal_config = multimodal_config or {}
+        self.storage: Optional[MemoryStorage] = storage
         
         # 初始化文件存储管理器
         if file_storage_manager is None:
@@ -159,13 +163,18 @@ class Memcontext:
             client=self.client, 
             max_capacity=mid_term_capacity,
             embedding_model_name=self.embedding_model_name,
-            embedding_model_kwargs=self.embedding_model_kwargs
+            embedding_model_kwargs=self.embedding_model_kwargs,
+            storage=self.storage,
+            user_id=self.user_id,
         )
         self.user_long_term_memory = LongTermMemory(
             file_path=user_long_term_path, 
             knowledge_capacity=long_term_knowledge_capacity,
             embedding_model_name=self.embedding_model_name,
-            embedding_model_kwargs=self.embedding_model_kwargs
+            embedding_model_kwargs=self.embedding_model_kwargs,
+            storage=self.storage,
+            owner_id=self.user_id,
+            owner_type="user",
         )
 
         # Initialize Memory Module for Assistant Knowledge
@@ -173,7 +182,10 @@ class Memcontext:
             file_path=assistant_long_term_path, 
             knowledge_capacity=long_term_knowledge_capacity,
             embedding_model_name=self.embedding_model_name,
-            embedding_model_kwargs=self.embedding_model_kwargs
+            embedding_model_kwargs=self.embedding_model_kwargs,
+            storage=self.storage,
+            owner_id=self.assistant_id,
+            owner_type="assistant",
         )
 
         # Initialize Orchestration Modules
@@ -244,7 +256,7 @@ class Memcontext:
             print(f"Memorycontext: Error extracting knowledge: {e}")
             import traceback
             traceback.print_exc()
-
+# NOTE 触发长期记忆的知识写入和助手知识写入
     def _trigger_profile_and_knowledge_update_if_needed(self):
         """
         Checks mid-term memory for hot segments and triggers profile/knowledge update if threshold is met.
@@ -264,6 +276,17 @@ class Memcontext:
             if not session:
                 self.mid_term_memory.rebuild_heap() # Clean up if session is gone
                 return
+
+            # 如果 session 没有 details（或为空），尝试从存储层按需加载 pages
+            try:
+                if isinstance(session, dict):
+                    details = session.get("details")
+                    if not isinstance(details, list) or len(details) == 0:
+                        if getattr(self.mid_term_memory, "storage", None) is not None and self.mid_term_memory.user_id is not None:
+                            pages = self.mid_term_memory.storage.load_session_pages(self.mid_term_memory.user_id, sid)
+                            session["details"] = pages or []
+            except Exception as e:
+                print(f"Memcontext: Warning - failed to lazy-load pages for session {sid}: {e}")
 
             # Get unanalyzed pages from this hot session
             # A page is a dict: {"user_input": ..., "agent_response": ..., "timestamp": ..., "analyzed": False, ...}
@@ -303,7 +326,7 @@ class Memcontext:
                 
                 new_user_private_knowledge = knowledge_result.get("private")
                 new_assistant_knowledge = knowledge_result.get("assistant_knowledge")
-
+# NOTE
                 # 直接使用更新后的完整用户画像
                 if updated_user_profile and updated_user_profile.lower() != "none":
                     print("Memcontext: Updating user profile with integrated analysis...")
@@ -314,7 +337,7 @@ class Memcontext:
                     for line in new_user_private_knowledge.split('\n'):
                          if line.strip() and line.strip().lower() not in ["none", "- none", "- none."]:
                             self.user_long_term_memory.add_user_knowledge(line.strip())
-
+# NOTE
                 # Add Assistant Knowledge to assistant's LTM
                 if new_assistant_knowledge and new_assistant_knowledge.lower() != "none":
                     for line in new_assistant_knowledge.split('\n'):
@@ -366,6 +389,7 @@ class Memcontext:
         self.short_term_memory.add_qa_pair(qa_pair)
         print(f"Memorycontext: Added QA to short-term (Sync). User: {user_input[:30]}...")
 
+# NOTE 触发中期长期记忆的写入
     def trigger_long_term_analysis_async(self):
         """
         Heavyweight operation: mid-term migration, profile analysis, knowledge extraction.
@@ -373,10 +397,10 @@ class Memcontext:
         """
         if self.short_term_memory.is_full():
             print("Memorycontext: Short-term memory full. Processing to mid-term (Async).")
-            self.updater.process_short_term_to_mid_term()
+            self.updater.process_short_term_to_mid_term()  # 短->中
         
         # After any memory addition that might impact mid-term, check for profile updates
-        self._trigger_profile_and_knowledge_update_if_needed()
+        self._trigger_profile_and_knowledge_update_if_needed()  # 触发长期记忆的写入
 
     def _needs_metadata(self, query: str) -> list:
         """

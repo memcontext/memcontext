@@ -92,7 +92,7 @@ class Updater:
                     visited.add(next_id)
         if q: # If any pages were updated
             self.mid_term_memory.save() # Save mid-term memory after updates
-
+# NOTE
     def process_short_term_to_mid_term(self):
         evicted_qas = []
         while self.short_term_memory.is_full():
@@ -186,7 +186,7 @@ class Updater:
                 theme_summary = summary_item.get("content", "General summary of recent interactions.")
                 theme_keywords = summary_item.get("keywords", [])
                 print(f"Updater: Processing theme '{summary_item.get('theme')}' for mid-term insertion.")
-                
+# NOTE 待写入信息                
                 # Pass the already processed pages (with IDs, embeddings to be added by MidTermMemory if not present)
                 self.mid_term_memory.insert_pages_into_session(
                     summary_for_new_pages=theme_summary,
