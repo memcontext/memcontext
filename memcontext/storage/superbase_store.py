@@ -106,6 +106,7 @@ class SupabaseStore(MemoryStorage):
         ltm_user_profiles_table: str = "long_term_user_profiles",
         ltm_user_knowledge_table: str = "long_term_user_knowledge",
         ltm_assistant_knowledge_table: str = "long_term_assistant_knowledge",
+        short_term_table: str = "short_term",
         auto_create_tables: bool = True,
         create_hnsw_index: bool = False,
         postgres_connection_string: Optional[str] = None,
@@ -132,6 +133,7 @@ class SupabaseStore(MemoryStorage):
         self._ltm_user_profiles_table = ltm_user_profiles_table
         self._ltm_user_knowledge_table = ltm_user_knowledge_table
         self._ltm_assistant_knowledge_table = ltm_assistant_knowledge_table
+        self._short_term_table = short_term_table
 
         # 创建 Supabase 客户端
         self._client: Client = create_client(self._supabase_url, self._supabase_key)
@@ -547,34 +549,43 @@ class SupabaseStore(MemoryStorage):
         knowledge_text: str,
         embedding: Sequence[float],
         timestamp: str,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         向 long_term_assistant_knowledge 表添加一条助手知识。
         表结构：id, assistant_id, user_id, knowledge, time_stamp, knowledge_embedding
-        这里的 user_id 可以为空，主要用于区分助手本身。
+        user_id 用于区分不同用户的助手知识；为 None 时表示全局助手知识。
         """
         row = {
             "id": generate_id("ltm_assistant_kn"),
             "assistant_id": _str_to_uuid(assistant_id),
-            "user_id": None,
+            "user_id": _str_to_uuid(user_id) if user_id else None,
             "knowledge": knowledge_text,
             "time_stamp": timestamp,
             "knowledge_embedding": self._to_vector(embedding, self._embedding_dim),
         }
         self._client.table(self._ltm_assistant_knowledge_table).insert(row).execute()
 
-    def get_assistant_knowledge(self, assistant_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_assistant_knowledge(
+        self,
+        assistant_id: str,
+        limit: int = 100,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         获取助手知识列表，按时间倒序，最多 limit 条。
+        user_id 不为空时仅返回该用户的助手知识。
         """
-        resp = (
+        q = (
             self._client.table(self._ltm_assistant_knowledge_table)
             .select("*")
             .eq("assistant_id", _str_to_uuid(assistant_id))
             .order("time_stamp", desc=True)
             .limit(limit)
-            .execute()
         )
+        if user_id is not None:
+            q = q.eq("user_id", _str_to_uuid(user_id))
+        resp = q.execute()
         rows = resp.data or []
         return [_assistant_knowledge_row_to_entry(r) for r in rows]
 
@@ -584,19 +595,24 @@ class SupabaseStore(MemoryStorage):
         query_embedding: Sequence[float],
         threshold: float,
         top_k: int,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         优先使用 pgvector RPC 在 DB 侧做相似度检索；RPC 不可用时回退到本地向量运算。
+        user_id 不为空时仅检索该用户的助手知识。
         """
         try:
+            rpc_params = {
+                "p_assistant_id": _str_to_uuid(assistant_id),
+                "p_query_embedding": self._embedding_to_rpc_str(query_embedding),
+                "p_sim_threshold": float(threshold),
+                "p_limit": int(top_k),
+            }
+            if user_id is not None:
+                rpc_params["p_user_id"] = _str_to_uuid(user_id)
             resp = self._client.rpc(
                 "match_assistant_knowledge_by_embedding",
-                {
-                    "p_assistant_id": _str_to_uuid(assistant_id),
-                    "p_query_embedding": self._embedding_to_rpc_str(query_embedding),
-                    "p_sim_threshold": float(threshold),
-                    "p_limit": int(top_k),
-                },
+                rpc_params,
             ).execute()
             rows = resp.data or []
             return [_assistant_knowledge_row_to_entry(r) for r in rows]
@@ -607,12 +623,14 @@ class SupabaseStore(MemoryStorage):
         if q_vec.ndim != 1:
             q_vec = q_vec.reshape(-1)
 
-        resp = (
+        q = (
             self._client.table(self._ltm_assistant_knowledge_table)
             .select("*")
             .eq("assistant_id", _str_to_uuid(assistant_id))
-            .execute()
         )
+        if user_id is not None:
+            q = q.eq("user_id", _str_to_uuid(user_id))
+        resp = q.execute()
         rows = resp.data or []
         if not rows:
             return []
@@ -632,6 +650,70 @@ class SupabaseStore(MemoryStorage):
 
         scored.sort(key=lambda x: x["score"], reverse=True)
         return [_assistant_knowledge_row_to_entry(s["entry"]) for s in scored[:top_k]]
+
+    # ---------- 短期记忆 (short_term) ----------
+
+    def load_short_term_items(self, user_id: str) -> List[Dict[str, Any]]:
+        """按 user_id 加载短期记忆 QA 对列表，按 created_at 升序（最旧在前）。"""
+        resp = (
+            self._client.table(self._short_term_table)
+            .select("*")
+            .eq("user_id", _str_to_uuid(user_id))
+            .order("created_at", desc=False)
+            .execute()
+        )
+        rows = resp.data or []
+        return [
+            {
+                "user_input": r.get("user_input"),
+                "agent_response": r.get("agent_response"),
+                "timestamp": r.get("time_stamp") or r.get("timestamp", ""),
+                "meta_data": r.get("meta_data") or {},
+            }
+            for r in rows
+        ]
+
+    def add_short_term_item(self, user_id: str, qa_pair: Dict[str, Any]) -> None:
+        """插入一条短期 QA 对。"""
+        item_id = generate_id("st")
+        row = {
+            "id": item_id,
+            "user_id": _str_to_uuid(user_id),
+            "user_input": qa_pair.get("user_input"),
+            "agent_response": qa_pair.get("agent_response"),
+            "time_stamp": qa_pair.get("timestamp", ""),
+            "meta_data": qa_pair.get("meta_data") or {},
+        }
+        self._client.table(self._short_term_table).insert(row).execute()
+
+    def pop_oldest_short_term_item(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """删除该用户最早的一条短期记录并返回其内容；若无则返回 None。"""
+        resp = (
+            self._client.table(self._short_term_table)
+            .select("*")
+            .eq("user_id", _str_to_uuid(user_id))
+            .order("created_at", desc=False)
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            return None
+        row = rows[0]
+        self._client.table(self._short_term_table).delete().eq(
+            "id", row["id"]
+        ).execute()
+        return {
+            "user_input": row.get("user_input"),
+            "agent_response": row.get("agent_response"),
+            "timestamp": row.get("time_stamp") or row.get("timestamp", ""),
+            "meta_data": row.get("meta_data") or {},
+        }
+
+    def count_short_term_items(self, user_id: str) -> int:
+        """返回该用户短期记忆条数。"""
+        items = self.load_short_term_items(user_id)
+        return len(items)
 
     # ---------- 会话加载 / 元信息 ----------
 

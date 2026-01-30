@@ -84,15 +84,21 @@ class LongTermMemory:
     def get_user_profile_data(self, user_id):
         return self.user_profiles.get(user_id, {})
 
-    def add_knowledge_entry(self, knowledge_text, knowledge_deque: deque, type_name="knowledge"):
+    def add_knowledge_entry(
+        self,
+        knowledge_text,
+        knowledge_deque: deque,
+        type_name="knowledge",
+        user_id: Optional[str] = None,
+    ):
         if not knowledge_text or knowledge_text.strip().lower() in ["", "none", "- none", "- none."]:
             print(f"LongTermMemory: Empty {type_name} received, not saving.")
             return
-        
+
         # If deque is full, the oldest item is automatically removed when appending.
         vec = get_embedding(
-            knowledge_text, 
-            model_name=self.embedding_model_name, 
+            knowledge_text,
+            model_name=self.embedding_model_name,
             **self.embedding_model_kwargs
         )
         vec = normalize_vector(vec).tolist()
@@ -120,6 +126,7 @@ class LongTermMemory:
                         knowledge_text=knowledge_text,
                         embedding=vec,
                         timestamp=entry["timestamp"],
+                        user_id=user_id,
                     )
             except Exception as e:
                 print(f"LongTermMemory: Error syncing {type_name} to Supabase: {e}")
@@ -129,8 +136,10 @@ class LongTermMemory:
     def add_user_knowledge(self, knowledge_text):
         self.add_knowledge_entry(knowledge_text, self.knowledge_base, "user knowledge")
 
-    def add_assistant_knowledge(self, knowledge_text):
-        self.add_knowledge_entry(knowledge_text, self.assistant_knowledge, "assistant knowledge")
+    def add_assistant_knowledge(self, knowledge_text, user_id: Optional[str] = None):
+        self.add_knowledge_entry(
+            knowledge_text, self.assistant_knowledge, "assistant knowledge", user_id=user_id
+        )
 
     def get_user_knowledge(self):
         # 如果配置了 Supabase，则优先从远端加载，限制为 capacity
@@ -144,12 +153,13 @@ class LongTermMemory:
                 print(f"LongTermMemory: Error loading user knowledge from Supabase, fallback to local. Error: {e}")
         return list(self.knowledge_base)
 
-    def get_assistant_knowledge(self):
+    def get_assistant_knowledge(self, user_id: Optional[str] = None):
         if self.storage is not None and self.owner_type == "assistant" and self.owner_id is not None:
             try:
                 return self.storage.get_assistant_knowledge(
                     assistant_id=self.owner_id,
                     limit=self.knowledge_capacity,
+                    user_id=user_id,
                 )
             except Exception as e:
                 print(f"LongTermMemory: Error loading assistant knowledge from Supabase, fallback to local. Error: {e}")
@@ -229,7 +239,7 @@ class LongTermMemory:
         print(f"LongTermMemory: Searched user knowledge for '{query[:30]}...'. Found {len(results)} matches.")
         return results
 
-    def search_assistant_knowledge(self, query, threshold=0.1, top_k=5):
+    def search_assistant_knowledge(self, query, threshold=0.1, top_k=5, user_id: Optional[str] = None):
         if self.storage is not None and self.owner_type == "assistant" and self.owner_id is not None:
             try:
                 query_vec = get_embedding(
@@ -243,6 +253,7 @@ class LongTermMemory:
                     query_embedding=query_vec,
                     threshold=threshold,
                     top_k=top_k,
+                    user_id=user_id,
                 )
                 print(f"LongTermMemory: Searched assistant knowledge via Supabase for '{query[:30]}...'. Found {len(results)} matches.")
                 return results
