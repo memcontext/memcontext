@@ -47,6 +47,21 @@ CREATE TABLE IF NOT EXISTS public.pages (
 );
 
 -- -----------------------------------------------------------------------------
+-- 表：short_term（短期记忆，每行一条 QA 对，按 user_id 隔离）
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.short_term (
+  id TEXT PRIMARY KEY,
+  user_id UUID NOT NULL,
+  user_input TEXT,
+  agent_response TEXT,
+  time_stamp TEXT,
+  meta_data JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_short_term_user_created
+  ON public.short_term (user_id, created_at ASC);
+-- -----------------------------------------------------------------------------
 -- 表：long_term_user_profiles
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.long_term_user_profiles (
@@ -161,12 +176,13 @@ BEGIN
 END;
 $$;
 
--- 4. 助手长期知识：按 knowledge_embedding 相似度检索
+-- 4. 助手长期知识：按 knowledge_embedding 相似度检索；p_user_id 不为空时仅返回该用户的助手知识
 CREATE OR REPLACE FUNCTION public.match_assistant_knowledge_by_embedding(
   p_assistant_id uuid,
   p_query_embedding vector(2048),
   p_sim_threshold float DEFAULT 0.0,
-  p_limit int DEFAULT 10
+  p_limit int DEFAULT 10,
+  p_user_id uuid DEFAULT NULL
 )
 RETURNS SETOF public.long_term_assistant_knowledge
 LANGUAGE plpgsql
@@ -176,6 +192,7 @@ BEGIN
   SELECT *
   FROM public.long_term_assistant_knowledge
   WHERE long_term_assistant_knowledge.assistant_id = p_assistant_id
+    AND (p_user_id IS NULL OR long_term_assistant_knowledge.user_id = p_user_id)
     AND (1 - (long_term_assistant_knowledge.knowledge_embedding <=> p_query_embedding)) >= p_sim_threshold
   ORDER BY long_term_assistant_knowledge.knowledge_embedding <=> p_query_embedding
   LIMIT p_limit;
